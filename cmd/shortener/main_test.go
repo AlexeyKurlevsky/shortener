@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +42,7 @@ func TestCreateShortURL(t *testing.T) {
 			method:         http.MethodGet,
 			body:           "",
 			expectedStatus: http.StatusMethodNotAllowed,
-			expectedBody:   "Only POST requests are allowed!\n",
+			expectedBody:   "",
 			checkDB:        false,
 		},
 		{
@@ -58,11 +59,14 @@ func TestCreateShortURL(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			db = make(map[string]string)
 
+			r := chi.NewRouter()
+			r.Post("/", CreateShortURL)
+
 			req := httptest.NewRequest(tt.method, "http://localhost:8080/", strings.NewReader(tt.body))
 			req.Host = "localhost:8080"
 			w := httptest.NewRecorder()
 
-			CreateShortURL(w, req)
+			r.ServeHTTP(w, req)
 
 			resp := w.Result()
 			defer resp.Body.Close()
@@ -76,10 +80,9 @@ func TestCreateShortURL(t *testing.T) {
 			bodyBytes, err := io.ReadAll(resp.Body)
 			require.NoError(t, err, "не удалось прочитать тело ответа")
 			bodyStr := string(bodyBytes)
-
 			if tt.expectedBody != "" {
 				assert.Equal(t, tt.expectedBody, bodyStr, "тело ответа не совпадает")
-			} else {
+			} else if tt.expectedStatus == http.StatusCreated {
 				expectedPrefix := "http://" + req.Host + "/"
 				assert.True(t, strings.HasPrefix(bodyStr, expectedPrefix),
 					"ответ должен начинаться с %q, получено %q", expectedPrefix, bodyStr)
@@ -99,16 +102,14 @@ func TestCreateShortURL(t *testing.T) {
 }
 
 func TestGetLink(t *testing.T) {
-	// Подготавливаем тестовые данные в глобальной db
-	// (будем пересоздавать перед каждым тестом)
 	tests := []struct {
 		name           string
 		method         string
-		path           string // полный путь, например "/abc123"
-		setupDB        func() // функция для наполнения db перед тестом
+		path           string
+		setupDB        func()
 		expectedStatus int
-		expectedHeader map[string]string // проверка заголовков
-		expectedBody   string            // тело ответа (ошибка)
+		expectedHeader map[string]string
+		expectedBody   string
 	}{
 		{
 			name:   "successful_redirect",
@@ -137,18 +138,18 @@ func TestGetLink(t *testing.T) {
 			method:         http.MethodGet,
 			path:           "/",
 			setupDB:        func() {},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			expectedHeader: nil,
-			expectedBody:   "Invalid id\n",
+			expectedBody:   "404 page not found\n",
 		},
 		{
 			name:           "id_with_slash",
 			method:         http.MethodGet,
 			path:           "/abc/def",
 			setupDB:        func() {},
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusNotFound,
 			expectedHeader: nil,
-			expectedBody:   "Invalid id\n",
+			expectedBody:   "404 page not found\n",
 		},
 		{
 			name:           "method_not_allowed_post",
@@ -157,7 +158,7 @@ func TestGetLink(t *testing.T) {
 			setupDB:        func() {},
 			expectedStatus: http.StatusMethodNotAllowed,
 			expectedHeader: nil,
-			expectedBody:   "Only GET requests are allowed!\n",
+			expectedBody:   "",
 		},
 	}
 
@@ -168,10 +169,13 @@ func TestGetLink(t *testing.T) {
 				tt.setupDB()
 			}
 
+			r := chi.NewRouter()
+			r.Get("/{id}", GetLink)
+
 			req := httptest.NewRequest(tt.method, "http://localhost:8080"+tt.path, nil)
 			w := httptest.NewRecorder()
 
-			GetLink(w, req)
+			r.ServeHTTP(w, req)
 
 			resp := w.Result()
 			defer resp.Body.Close()
@@ -183,14 +187,14 @@ func TestGetLink(t *testing.T) {
 				assert.Equal(t, expectedVal, actual, "заголовок %q не совпадает", key)
 			}
 
+			bodyBytes, err := io.ReadAll(resp.Body)
+			require.NoError(t, err, "не удалось прочитать тело ответа")
+			bodyStr := string(bodyBytes)
+
 			if tt.expectedBody != "" {
-				bodyBytes, err := io.ReadAll(resp.Body)
-				require.NoError(t, err, "не удалось прочитать тело ответа")
-				assert.Equal(t, tt.expectedBody, string(bodyBytes), "тело ответа не совпадает")
-			} else {
-				bodyBytes, err := io.ReadAll(resp.Body)
-				require.NoError(t, err)
-				assert.Empty(t, string(bodyBytes), "при редиректе тело должно быть пустым")
+				assert.Equal(t, tt.expectedBody, bodyStr, "тело ответа не совпадает")
+			} else if tt.expectedStatus == http.StatusTemporaryRedirect {
+				assert.Empty(t, bodyStr, "при редиректе тело должно быть пустым")
 			}
 		})
 	}
