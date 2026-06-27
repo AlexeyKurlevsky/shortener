@@ -1,5 +1,5 @@
 run:
-	go run ./cmd/shortener/main.go
+	go run ./cmd/shortener/
 
 build:
 	go build -o ./cmd/shortener/shortener ./cmd/shortener
