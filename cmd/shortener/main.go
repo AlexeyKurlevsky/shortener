@@ -74,7 +74,8 @@ func CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	db[id] = link
 	log.Printf("[CreateShortURL] Stored ID=%s -> %s", id, link)
 
-	shortURL := "http://" + r.Host + "/" + id
+	host := strings.Split(r.Host, ":")[0]
+	shortURL := "http://" + host + flagTinyURL + "/" + id
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
 	w.Write([]byte(shortURL))
@@ -111,8 +112,10 @@ func run() error {
 	r.Use(middleware.Logger, middleware.Recoverer)
 	r.Post("/", CreateShortURL)
 	r.Get("/{id}", GetLink)
+
+	parseFlags()
 	log.Println("Server starting on :8080")
-	return http.ListenAndServe(":8080", r)
+	return http.ListenAndServe(flagRunAddr, r)
 }
 
 func main() {

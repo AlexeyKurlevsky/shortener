@@ -12,6 +12,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func init() {
+	flagTinyURL = ":8080"
+}
+
 func TestCreateShortURL(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -83,7 +87,8 @@ func TestCreateShortURL(t *testing.T) {
 			if tt.expectedBody != "" {
 				assert.Equal(t, tt.expectedBody, bodyStr, "тело ответа не совпадает")
 			} else if tt.expectedStatus == http.StatusCreated {
-				expectedPrefix := "http://" + req.Host + "/"
+				host := strings.Split(req.Host, ":")[0]
+				expectedPrefix := "http://" + host + flagTinyURL + "/"
 				assert.True(t, strings.HasPrefix(bodyStr, expectedPrefix),
 					"ответ должен начинаться с %q, получено %q", expectedPrefix, bodyStr)
 
