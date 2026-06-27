@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/config" // ваш путь
+	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 )
@@ -48,21 +48,16 @@ func IsValidURL(str string) bool {
 
 func CreateShortURL(w http.ResponseWriter, r *http.Request, cfg *config.Config) {
 	log.Printf("[CreateShortURL] Method=%s, Path=%s", r.Method, r.URL.Path)
-
-	bodyBytes, err := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		log.Printf("[CreateShortURL] Error reading body: %v", err)
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
 		return
 	}
-
-	link := string(bodyBytes)
+	link := string(body)
 	if !IsValidURL(link) {
-		log.Printf("[CreateShortURL] Invalid URL: %q", link)
 		http.Error(w, "Invalid link", http.StatusBadRequest)
 		return
 	}
-
 	var id string
 	for {
 		id = generateID()
@@ -71,8 +66,6 @@ func CreateShortURL(w http.ResponseWriter, r *http.Request, cfg *config.Config) 
 		}
 	}
 	db[id] = link
-	log.Printf("[CreateShortURL] Stored ID=%s -> %s", id, link)
-
 	shortURL := cfg.BaseURL + "/" + id
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
@@ -85,12 +78,12 @@ func GetLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	originalURL, exists := db[id]
-	if !exists {
+	original, ok := db[id]
+	if !ok {
 		http.Error(w, "URL not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Location", originalURL)
+	w.Header().Set("Location", original)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
@@ -98,7 +91,6 @@ func run(cfg *config.Config) error {
 	db = make(localDB)
 	r := chi.NewRouter()
 	r.Use(middleware.Logger, middleware.Recoverer)
-
 	r.Post("/", func(w http.ResponseWriter, req *http.Request) {
 		CreateShortURL(w, req, cfg)
 	})
