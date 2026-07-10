@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
@@ -47,7 +46,6 @@ func IsValidURL(str string) bool {
 }
 
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[CreateShortURL] Method=%s, Path=%s", r.Method, r.URL.Path)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
