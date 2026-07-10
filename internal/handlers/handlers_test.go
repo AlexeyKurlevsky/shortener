@@ -16,19 +16,13 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// mockStorage implements the full storage.Storage interface for testing.
 type mockStorage struct {
-	// For FindIDByURL
 	findIDByURLFunc func(url string) (string, bool)
-	// For Exists
-	existsFunc func(id string) bool
-	// For Save
-	saveFunc func(id, url string) error
-	// For Get
-	getFunc func(id string) (string, error)
-	// For Load and SaveToFile (no-ops by default)
-	loadFunc       func() error
-	saveToFileFunc func() error
+	existsFunc      func(id string) bool
+	saveFunc        func(id, url string) error
+	getFunc         func(id string) (string, error)
+	loadFunc        func() error
+	saveToFileFunc  func() error
 }
 
 func (m *mockStorage) FindIDByURL(url string) (string, bool) {
@@ -73,7 +67,6 @@ func (m *mockStorage) SaveToFile() error {
 	return nil
 }
 
-// Helper to create a handler with a given mock storage and config.
 func setupTest(mock *mockStorage) *Handler {
 	cfg := &config.Config{
 		ServerAddr: ":8080",
@@ -82,7 +75,6 @@ func setupTest(mock *mockStorage) *Handler {
 	return NewHandler(mock, cfg)
 }
 
-// TestIsValidURL tests the URL validation helper.
 func TestIsValidURL(t *testing.T) {
 	tests := []struct {
 		name string
@@ -132,7 +124,6 @@ func TestCreateShortURL(t *testing.T) {
 			wantStatus:     http.StatusOK,
 			wantBodyPrefix: "http://localhost:8080/abc123",
 		},
-		// ... other test cases ...
 	}
 
 	for _, tt := range tests {
@@ -176,7 +167,7 @@ func TestGetLink(t *testing.T) {
 		id         string
 		mockGet    func(string) (string, error)
 		wantStatus int
-		wantHeader string // Location header value
+		wantHeader string
 	}{
 		{
 			name:       "success",
@@ -240,12 +231,12 @@ func TestGetLink(t *testing.T) {
 func TestCreateShortURLJson(t *testing.T) {
 	tests := []struct {
 		name           string
-		body           interface{} // can be a struct or string to test malformed JSON
+		body           interface{}
 		mockFind       func(string) (string, bool)
 		mockExists     func(string) bool
 		mockSave       func(string, string) error
 		wantStatus     int
-		wantBodyResult string // expected result in response JSON
+		wantBodyResult string
 	}{
 		{
 			name:           "success new URL",
@@ -324,7 +315,6 @@ func TestCreateShortURLJson(t *testing.T) {
 				if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
 					t.Fatalf("failed to decode response: %v", err)
 				}
-				// For new URL, we only check prefix because generated ID is random.
 				if tt.wantBodyResult == "http://localhost:8080/" {
 					if !strings.HasPrefix(resp.Result, tt.wantBodyResult) {
 						t.Errorf("result = %q, want prefix %q", resp.Result, tt.wantBodyResult)
