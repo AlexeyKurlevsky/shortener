@@ -2,11 +2,15 @@ package main
 
 import (
 	"io"
+	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
 )
 
 type localDB map[string]string
@@ -42,24 +46,24 @@ func IsValidURL(str string) bool {
 }
 
 func CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Only POST requests are allowed!", http.StatusMethodNotAllowed)
-		return
-	}
+	log.Printf("[CreateShortURL] Method=%s, Path=%s", r.Method, r.URL.Path)
 
 	bodyBytes, err := io.ReadAll(r.Body)
 	if err != nil {
+		log.Printf("[CreateShortURL] Error reading body: %v", err)
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
 		return
 	}
 
 	link := string(bodyBytes)
+	log.Printf("[CreateShortURL] Received link: %q", link)
+
 	if !IsValidURL(link) {
+		log.Printf("[CreateShortURL] Invalid URL: %q", link)
 		http.Error(w, "Invalid link", http.StatusBadRequest)
 		return
 	}
 
-	// Генерируем уникальный ID
 	var id string
 	for {
 		id = generateID()
@@ -68,56 +72,51 @@ func CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	db[id] = link
+	log.Printf("[CreateShortURL] Stored ID=%s -> %s", id, link)
 
-	// Формируем полный короткий URL
 	shortURL := "http://" + r.Host + "/" + id
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte(shortURL)) // возвращаем не ID, а полный URL
+	w.Write([]byte(shortURL))
+	log.Printf("[CreateShortURL] Response: %s", shortURL)
 }
 
 func GetLink(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Only GET requests are allowed!", http.StatusMethodNotAllowed)
-		return
-	}
+	log.Printf("[GetLink] Method=%s, Path=%s", r.Method, r.URL.Path)
 
-	id := strings.TrimPrefix(r.URL.Path, "/")
+	id := chi.URLParam(r, "id")
+	log.Printf("[GetLink] Extracted id=%q", id)
+
 	if id == "" || strings.Contains(id, "/") {
+		log.Printf("[GetLink] Invalid id: %q", id)
 		http.Error(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
 
 	originalURL, exists := db[id]
 	if !exists {
+		log.Printf("[GetLink] ID %q not found in DB", id)
 		http.Error(w, "URL not found", http.StatusNotFound)
 		return
 	}
 
+	log.Printf("[GetLink] Redirecting %q -> %q", id, originalURL)
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect) // 307
 }
 
-func mainHandler(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		CreateShortURL(w, r)
-	case http.MethodGet:
-		GetLink(w, r)
-	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
 func run() error {
 	db = make(localDB)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/", mainHandler)
-	return http.ListenAndServe(":8080", mux)
+	r := chi.NewRouter()
+	r.Use(middleware.Logger, middleware.Recoverer)
+	r.Post("/", CreateShortURL)
+	r.Get("/{id}", GetLink)
+	log.Println("Server starting on :8080")
+	return http.ListenAndServe(":8080", r)
 }
 
 func main() {
 	if err := run(); err != nil {
-		panic(err)
+		log.Fatalf("Server failed: %v", err)
 	}
 }
