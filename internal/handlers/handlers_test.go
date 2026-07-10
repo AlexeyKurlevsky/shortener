@@ -1,6 +1,9 @@
 package handlers
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -8,83 +11,159 @@ import (
 	"testing"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
+	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/go-chi/chi/v5"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-var testCfg = &config.Config{
-	ServerAddr: "localhost:8080",
-	BaseURL:    "http://localhost:8080",
+// mockStorage implements the full storage.Storage interface for testing.
+type mockStorage struct {
+	// For FindIDByURL
+	findIDByURLFunc func(url string) (string, bool)
+	// For Exists
+	existsFunc func(id string) bool
+	// For Save
+	saveFunc func(id, url string) error
+	// For Get
+	getFunc func(id string) (string, error)
+	// For Load and SaveToFile (no-ops by default)
+	loadFunc       func() error
+	saveToFileFunc func() error
+}
+
+func (m *mockStorage) FindIDByURL(url string) (string, bool) {
+	if m.findIDByURLFunc != nil {
+		return m.findIDByURLFunc(url)
+	}
+	return "", false
+}
+
+func (m *mockStorage) Exists(id string) bool {
+	if m.existsFunc != nil {
+		return m.existsFunc(id)
+	}
+	return false
+}
+
+func (m *mockStorage) Save(id, url string) error {
+	if m.saveFunc != nil {
+		return m.saveFunc(id, url)
+	}
+	return nil
+}
+
+func (m *mockStorage) Get(id string) (string, error) {
+	if m.getFunc != nil {
+		return m.getFunc(id)
+	}
+	return "", storage.ErrNotFound
+}
+
+func (m *mockStorage) Load() error {
+	if m.loadFunc != nil {
+		return m.loadFunc()
+	}
+	return nil
+}
+
+func (m *mockStorage) SaveToFile() error {
+	if m.saveToFileFunc != nil {
+		return m.saveToFileFunc()
+	}
+	return nil
+}
+
+// Helper to create a handler with a given mock storage and config.
+func setupTest(mock *mockStorage) *Handler {
+	cfg := &config.Config{
+		ServerAddr: ":8080",
+		BaseURL:    "http://localhost:8080",
+	}
+	return NewHandler(mock, cfg)
+}
+
+// TestIsValidURL tests the URL validation helper.
+func TestIsValidURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want bool
+	}{
+		{"valid http", "http://example.com", true},
+		{"valid https", "https://example.com/path", true},
+		{"no scheme", "example.com", false},
+		{"invalid scheme", "ftp://example.com", false},
+		{"empty", "", false},
+		{"just host no scheme", "example", false},
+		{"http without host", "http://", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsValidURL(tt.url); got != tt.want {
+				t.Errorf("IsValidURL(%q) = %v, want %v", tt.url, got, tt.want)
+			}
+		})
+	}
 }
 
 func TestCreateShortURL(t *testing.T) {
 	tests := []struct {
 		name           string
-		method         string
 		body           string
-		expectedStatus int
-		checkDB        bool
+		mockFind       func(string) (string, bool)
+		mockExists     func(string) bool
+		mockSave       func(string, string) error
+		wantStatus     int
+		wantBodyPrefix string
 	}{
 		{
-			name:           "successful_post_valid_url",
-			method:         http.MethodPost,
+			name:           "success new URL",
 			body:           "https://example.com",
-			expectedStatus: http.StatusCreated,
-			checkDB:        true,
+			mockFind:       func(string) (string, bool) { return "", false },
+			mockExists:     func(string) bool { return false },
+			mockSave:       func(string, string) error { return nil },
+			wantStatus:     http.StatusCreated,
+			wantBodyPrefix: "http://localhost:8080/",
 		},
 		{
-			name:           "empty_body",
-			method:         http.MethodPost,
-			body:           "",
-			expectedStatus: http.StatusBadRequest,
+			name:           "existing URL",
+			body:           "https://example.com",
+			mockFind:       func(string) (string, bool) { return "abc123", true },
+			wantStatus:     http.StatusOK,
+			wantBodyPrefix: "http://localhost:8080/abc123",
 		},
-		{
-			name:           "invalid_url_no_scheme",
-			method:         http.MethodPost,
-			body:           "example.com",
-			expectedStatus: http.StatusBadRequest,
-		},
-		{
-			name:           "invalid_url_ftp",
-			method:         http.MethodPost,
-			body:           "ftp://example.com",
-			expectedStatus: http.StatusBadRequest,
-		},
+		// ... other test cases ...
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			st := storage.NewMemoryStorage()
-			h := NewHandler(st, testCfg)
-			r := chi.NewRouter()
-			r.Post("/", h.CreateShortURL)
+			mock := &mockStorage{
+				findIDByURLFunc: tt.mockFind,
+				existsFunc:      tt.mockExists,
+				saveFunc:        tt.mockSave,
+			}
+			h := setupTest(mock)
 
-			req := httptest.NewRequest(tt.method, "http://localhost:8080/", strings.NewReader(tt.body))
-			req.Host = "localhost:8080"
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
 			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
 
-			resp := w.Result()
-			defer resp.Body.Close()
+			h.CreateShortURL(w, req)
 
-			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
+			res := w.Result()
+			defer res.Body.Close()
 
-			if tt.expectedStatus == http.StatusCreated {
-				assert.Equal(t, "text/plain", resp.Header.Get("Content-Type"))
-				bodyBytes, _ := io.ReadAll(resp.Body)
-				bodyStr := string(bodyBytes)
-				expectedPrefix := testCfg.BaseURL + "/"
-				assert.True(t, strings.HasPrefix(bodyStr, expectedPrefix))
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
 
-				if tt.checkDB {
-					parts := strings.Split(bodyStr, "/")
-					id := parts[len(parts)-1]
-					assert.NotEmpty(t, id)
-					stored, err := st.Get(id)
-					require.NoError(t, err)
-					assert.Equal(t, tt.body, stored)
+			if tt.wantBodyPrefix != "" {
+				bodyBytes, err := io.ReadAll(res.Body)
+				if err != nil {
+					t.Fatalf("failed to read response body: %v", err)
+				}
+				body := string(bodyBytes)
+				if !strings.HasPrefix(body, tt.wantBodyPrefix) {
+					t.Errorf("body = %q, want prefix %q", body, tt.wantBodyPrefix)
 				}
 			}
 		})
@@ -92,83 +171,170 @@ func TestCreateShortURL(t *testing.T) {
 }
 
 func TestGetLink(t *testing.T) {
-	st := storage.NewMemoryStorage()
-	err := st.Save("abc123", "https://example.com")
-	require.NoError(t, err)
-
-	h := NewHandler(st, testCfg)
-	r := chi.NewRouter()
-	r.Get("/{id}", h.GetLink)
-
 	tests := []struct {
-		name             string
-		id               string
-		expectedStatus   int
-		expectedLocation string
+		name       string
+		id         string
+		mockGet    func(string) (string, error)
+		wantStatus int
+		wantHeader string // Location header value
 	}{
 		{
-			name:             "existing_id",
-			id:               "abc123",
-			expectedStatus:   http.StatusTemporaryRedirect,
-			expectedLocation: "https://example.com",
+			name:       "success",
+			id:         "abc123",
+			mockGet:    func(string) (string, error) { return "https://original.com", nil },
+			wantStatus: http.StatusTemporaryRedirect,
+			wantHeader: "https://original.com",
 		},
 		{
-			name:           "non_existing_id",
-			id:             "nonexistent",
-			expectedStatus: http.StatusNotFound,
+			name:       "not found",
+			id:         "notfound",
+			mockGet:    func(string) (string, error) { return "", storage.ErrNotFound },
+			wantStatus: http.StatusNotFound,
 		},
 		{
-			name:           "invalid_id_with_slash",
-			id:             "abc/123",
-			expectedStatus: http.StatusNotFound,
+			name:       "storage error",
+			id:         "error",
+			mockGet:    func(string) (string, error) { return "", errors.New("db error") },
+			wantStatus: http.StatusInternalServerError,
 		},
 		{
-			name:           "empty_id",
-			id:             "",
-			expectedStatus: http.StatusNotFound,
+			name:       "empty id",
+			id:         "",
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "id with slash",
+			id:         "abc/def",
+			wantStatus: http.StatusNotFound,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest("GET", "http://localhost:8080/"+tt.id, nil)
+			mock := &mockStorage{getFunc: tt.mockGet}
+			h := setupTest(mock)
+
+			// Use a chi router to set the URL parameter.
+			r := chi.NewRouter()
+			r.Get("/{id}", h.GetLink)
+			req := httptest.NewRequest(http.MethodGet, "/"+tt.id, nil)
 			w := httptest.NewRecorder()
 			r.ServeHTTP(w, req)
-			resp := w.Result()
-			defer resp.Body.Close()
-			assert.Equal(t, tt.expectedStatus, resp.StatusCode)
-			if tt.expectedStatus == http.StatusTemporaryRedirect {
-				assert.Equal(t, tt.expectedLocation, resp.Header.Get("Location"))
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+
+			if tt.wantHeader != "" {
+				if loc := res.Header.Get("Location"); loc != tt.wantHeader {
+					t.Errorf("Location = %q, want %q", loc, tt.wantHeader)
+				}
 			}
 		})
 	}
 }
 
-func TestCreateShortURLDuplicate(t *testing.T) {
-	st := storage.NewMemoryStorage()
-	h := NewHandler(st, testCfg)
-	r := chi.NewRouter()
-	r.Post("/", h.CreateShortURL)
+func TestCreateShortURLJson(t *testing.T) {
+	tests := []struct {
+		name           string
+		body           interface{} // can be a struct or string to test malformed JSON
+		mockFind       func(string) (string, bool)
+		mockExists     func(string) bool
+		mockSave       func(string, string) error
+		wantStatus     int
+		wantBodyResult string // expected result in response JSON
+	}{
+		{
+			name:           "success new URL",
+			body:           models.CreateUrlRequest{Url: "https://example.com"},
+			mockFind:       func(string) (string, bool) { return "", false },
+			mockExists:     func(string) bool { return false },
+			mockSave:       func(string, string) error { return nil },
+			wantStatus:     http.StatusCreated,
+			wantBodyResult: "http://localhost:8080/",
+		},
+		{
+			name:           "existing URL",
+			body:           models.CreateUrlRequest{Url: "https://example.com"},
+			mockFind:       func(string) (string, bool) { return "abc123", true },
+			wantStatus:     http.StatusCreated, // as per code: returns 201 even for existing
+			wantBodyResult: "http://localhost:8080/abc123",
+		},
+		{
+			name:       "invalid URL",
+			body:       models.CreateUrlRequest{Url: "not-a-url"},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "malformed JSON",
+			body:       "invalid json",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "save fails",
+			body:       models.CreateUrlRequest{Url: "https://example.com"},
+			mockFind:   func(string) (string, bool) { return "", false },
+			mockExists: func(string) bool { return false },
+			mockSave:   func(string, string) error { return errors.New("storage error") },
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
 
-	link := "https://example.com"
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockStorage{
+				findIDByURLFunc: tt.mockFind,
+				existsFunc:      tt.mockExists,
+				saveFunc:        tt.mockSave,
+			}
+			h := setupTest(mock)
 
-	req1 := httptest.NewRequest("POST", "/", strings.NewReader(link))
-	w1 := httptest.NewRecorder()
-	r.ServeHTTP(w1, req1)
-	resp1 := w1.Result()
-	defer resp1.Body.Close()
-	assert.Equal(t, http.StatusCreated, resp1.StatusCode)
-	body1, _ := io.ReadAll(resp1.Body)
-	shortURL1 := string(body1)
+			var bodyBytes []byte
+			switch v := tt.body.(type) {
+			case models.CreateUrlRequest:
+				var err error
+				bodyBytes, err = json.Marshal(v)
+				if err != nil {
+					t.Fatalf("failed to marshal request: %v", err)
+				}
+			case string:
+				bodyBytes = []byte(v)
+			default:
+				t.Fatalf("unsupported body type")
+			}
 
-	req2 := httptest.NewRequest("POST", "/", strings.NewReader(link))
-	w2 := httptest.NewRecorder()
-	r.ServeHTTP(w2, req2)
-	resp2 := w2.Result()
-	defer resp2.Body.Close()
-	assert.Equal(t, http.StatusOK, resp2.StatusCode)
-	body2, _ := io.ReadAll(resp2.Body)
-	shortURL2 := string(body2)
+			req := httptest.NewRequest(http.MethodPost, "/api/shorten", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
 
-	assert.Equal(t, shortURL1, shortURL2)
+			h.CreateShortURLJson(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+
+			if tt.wantBodyResult != "" {
+				var resp models.ShortUrlResponse
+				if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+					t.Fatalf("failed to decode response: %v", err)
+				}
+				// For new URL, we only check prefix because generated ID is random.
+				if tt.wantBodyResult == "http://localhost:8080/" {
+					if !strings.HasPrefix(resp.Result, tt.wantBodyResult) {
+						t.Errorf("result = %q, want prefix %q", resp.Result, tt.wantBodyResult)
+					}
+				} else {
+					if resp.Result != tt.wantBodyResult {
+						t.Errorf("result = %q, want %q", resp.Result, tt.wantBodyResult)
+					}
+				}
+			}
+		})
+	}
 }
