@@ -1,16 +1,19 @@
 package handlers
 
 import (
+	"encoding/json"
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
+	"github.com/AlexeyKurlevsky/shortener/internal/logger"
+	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 type Handler struct {
@@ -47,7 +50,6 @@ func IsValidURL(str string) bool {
 }
 
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	log.Printf("[CreateShortURL] Method=%s, Path=%s", r.Method, r.URL.Path)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
@@ -103,4 +105,58 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Location", original)
 	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
+	var req models.CreateUrlRequest
+	dec := json.NewDecoder(r.Body)
+
+	if err := dec.Decode(&req); err != nil {
+		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	if !IsValidURL(req.Url) {
+		http.Error(w, "Invalid link", http.StatusBadRequest)
+		return
+	}
+
+	if id, ok := h.storage.FindIDByURL(req.Url); ok {
+		shortURL := h.cfg.BaseURL + "/" + id
+		resp := models.ShortUrlResponse{
+			Result: shortURL,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			logger.Log.Error("failed to encode response", zap.Error(err))
+		}
+		return
+	}
+
+	// Генерируем новый ID
+	var id string
+	for {
+		id = generateID()
+		if !h.storage.Exists(id) {
+			break
+		}
+	}
+	if err := h.storage.Save(id, req.Url); err != nil {
+		http.Error(w, "Failed to save URL", http.StatusInternalServerError)
+		return
+	}
+
+	shortURL := h.cfg.BaseURL + "/" + id
+	resp := models.ShortUrlResponse{
+		Result: shortURL,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logger.Log.Error("failed to encode response", zap.Error(err))
+	}
 }

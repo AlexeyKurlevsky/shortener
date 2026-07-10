@@ -4,26 +4,48 @@ import (
 	"flag"
 	"log"
 	"strings"
+
+	"github.com/caarlos0/env"
 )
 
 type Config struct {
-	ServerAddr      string
-	BaseURL         string
+	ServerAddr      string `env:"SERVER_ADDRESS"`
+	BaseURL         string `env:"BASE_URL"`
+	LogLevel        string `env:"LOG" envDefault:"info"`
 	FileStoragePath string
 }
 
 func NewConfig() *Config {
-	var cfg Config
+	var cfgFlag Config
+	var cfgEnv Config
 
-	flag.StringVar(&cfg.ServerAddr, "a", ":8080", "address to run server (e.g., localhost:8888)")
-	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
-	flag.StringVar(&cfg.FileStoragePath, "f", "storage.json", "path file storage")
+	flag.StringVar(&cfgFlag.ServerAddr, "a", ":8080", "address to run server (e.g., localhost:8888)")
+	flag.StringVar(&cfgFlag.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
+	flag.StringVar(&cfgFlag.FileStoragePath, "f", "storage.json", "path file storage")
+	flag.StringVar(&cfgFlag.LogLevel, "l", "info", "log level")
 	flag.Parse()
 
-	if !strings.HasPrefix(cfg.BaseURL, "http://") && !strings.HasPrefix(cfg.BaseURL, "https://") {
-		cfg.BaseURL = "http://" + cfg.BaseURL
+	err := env.Parse(&cfgEnv)
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	log.Printf("Config: ServerAddr=%s, BaseURL=%s, FileStoragePath=%s", cfg.ServerAddr, cfg.BaseURL, cfg.FileStoragePath)
-	return &cfg
+	// Приоритет у env
+	if cfgEnv.BaseURL != "" {
+		cfgFlag.BaseURL = cfgEnv.BaseURL
+	}
+
+	if cfgEnv.ServerAddr != "" {
+		cfgFlag.ServerAddr = cfgEnv.ServerAddr
+	}
+
+	if cfgEnv.LogLevel != "" {
+		cfgFlag.LogLevel = cfgEnv.LogLevel
+	}
+
+	if !strings.HasPrefix(cfgFlag.BaseURL, "http://") && !strings.HasPrefix(cfgFlag.BaseURL, "https://") {
+		cfgFlag.BaseURL = "http://" + cfgFlag.BaseURL
+	}
+
+	return &cfgFlag
 }
