@@ -22,3 +22,5 @@ vendor/
 .idea
 .vscode
 storage.json
+
+.env
