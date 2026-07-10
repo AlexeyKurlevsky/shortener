@@ -6,18 +6,24 @@ import (
 
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
+	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"go.uber.org/zap"
 )
 
 func main() {
 	cfg := config.NewConfig()
 
+	if err := logger.Initialize(cfg.LogLevel); err != nil {
+		log.Fatalf("Failed to initialize logger: %v", err)
+	}
+
 	var st storage.Storage
 	if cfg.FileStoragePath != "" {
 		s, err := storage.NewJSONStorage(cfg.FileStoragePath)
 		if err != nil {
-			log.Fatalf("Failed to init JSON storage: %v", err)
+			logger.Log.Fatal("Failed to init JSON storage", zap.Error(err))
 		}
 		st = s
 	} else {
@@ -27,8 +33,12 @@ func main() {
 	h := handlers.NewHandler(st, cfg)
 	r := server.NewRouter(h)
 
-	log.Printf("Server starting on %s", cfg.ServerAddr)
+	logger.Log.Info("Config",
+		zap.String("ServerAddr", cfg.ServerAddr),
+		zap.String("BaseURL", cfg.BaseURL),
+		zap.String("FileStoragePath", cfg.FileStoragePath),
+	)
 	if err := http.ListenAndServe(cfg.ServerAddr, r); err != nil {
-		log.Fatalf("Server failed: %v", err)
+		logger.Log.Fatal("Server failed: %v", zap.Error(err))
 	}
 }
