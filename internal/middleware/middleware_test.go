@@ -11,7 +11,6 @@ import (
 	"testing"
 )
 
-// testHandler echoes request body or returns "Hello, World!" if empty.
 func testHandler(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -20,13 +19,12 @@ func testHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/plain")
 	if len(body) > 0 {
-		w.Write(body)
+		_, _ = w.Write(body)
 	} else {
-		w.Write([]byte("Hello, World!"))
+		_, _ = w.Write([]byte("Hello, World!"))
 	}
 }
 
-// jsonHandler echoes received JSON.
 func jsonHandler(w http.ResponseWriter, r *http.Request) {
 	var data map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&data); err != nil {
@@ -38,10 +36,8 @@ func jsonHandler(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-// decompressIfGzipped reads body and decompresses if it's gzip (by header or magic bytes).
-func decompressIfGzipped(resp *http.Response) ([]byte, error) {
+func readBody(resp *http.Response) ([]byte, error) {
 	defer resp.Body.Close()
-	// If header says gzip or body starts with gzip magic, decompress.
 	if resp.Header.Get("Content-Encoding") == "gzip" {
 		gr, err := gzip.NewReader(resp.Body)
 		if err != nil {
@@ -50,21 +46,7 @@ func decompressIfGzipped(resp *http.Response) ([]byte, error) {
 		defer gr.Close()
 		return io.ReadAll(gr)
 	}
-	// Peek first two bytes
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if len(bodyBytes) >= 2 && bodyBytes[0] == 0x1f && bodyBytes[1] == 0x8b {
-		// It's gzip even without header
-		gr, err := gzip.NewReader(bytes.NewReader(bodyBytes))
-		if err != nil {
-			return nil, err
-		}
-		defer gr.Close()
-		return io.ReadAll(gr)
-	}
-	return bodyBytes, nil
+	return io.ReadAll(resp.Body)
 }
 
 func TestGzipMiddleware_ResponseGzip(t *testing.T) {
@@ -76,9 +58,13 @@ func TestGzipMiddleware_ResponseGzip(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := decompressIfGzipped(resp)
+	// Expect Content-Encoding: gzip
+	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
+	}
+	body, err := readBody(resp)
 	if err != nil {
-		t.Fatalf("failed to decompress: %v", err)
+		t.Fatalf("failed to read body: %v", err)
 	}
 	expected := "Hello, World!"
 	if string(body) != expected {
@@ -94,8 +80,11 @@ func TestGzipMiddleware_ResponseNoGzip(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	// No Accept-Encoding -> no compression
+	if ce := resp.Header.Get("Content-Encoding"); ce == "gzip" {
+		t.Error("unexpected Content-Encoding: gzip")
+	}
+	body, err := readBody(resp)
 	if err != nil {
 		t.Fatalf("failed to read body: %v", err)
 	}
@@ -124,9 +113,13 @@ func TestGzipMiddleware_RequestGzip(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := decompressIfGzipped(resp)
+	// Expect compressed response because Accept-Encoding: gzip
+	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
+	}
+	body, err := readBody(resp)
 	if err != nil {
-		t.Fatalf("failed to decompress: %v", err)
+		t.Fatalf("failed to read body: %v", err)
 	}
 	if string(body) != originalBody {
 		t.Errorf("expected echoed body %q, got %q", originalBody, string(body))
@@ -142,8 +135,11 @@ func TestGzipMiddleware_RequestNoGzip(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	// No Accept-Encoding -> no compression
+	if ce := resp.Header.Get("Content-Encoding"); ce == "gzip" {
+		t.Error("unexpected Content-Encoding: gzip")
+	}
+	body, err := readBody(resp)
 	if err != nil {
 		t.Fatalf("failed to read response body: %v", err)
 	}
@@ -187,16 +183,17 @@ func TestGzipMiddleware_Combined(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := decompressIfGzipped(resp)
+	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
+	}
+	body, err := readBody(resp)
 	if err != nil {
-		t.Fatalf("failed to decompress: %v", err)
+		t.Fatalf("failed to read body: %v", err)
 	}
 	if string(body) != originalBody {
 		t.Errorf("expected echoed body %q, got %q", originalBody, string(body))
 	}
 }
-
-// ---------- JSON specific tests ----------
 
 func TestGzipMiddleware_JSONRequestGzipResponse(t *testing.T) {
 	originalJSON := map[string]string{"key": "value", "foo": "bar"}
@@ -222,20 +219,23 @@ func TestGzipMiddleware_JSONRequestGzipResponse(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := decompressIfGzipped(resp)
-	if err != nil {
-		t.Fatalf("failed to decompress: %v", err)
+	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type: application/json, got %q", ct)
 	}
 
+	body, err := readBody(resp)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
 	var respData map[string]string
 	if err := json.Unmarshal(body, &respData); err != nil {
 		t.Fatalf("failed to unmarshal response JSON: %v", err)
 	}
 	if !equalMapString(originalJSON, respData) {
 		t.Errorf("expected %v, got %v", originalJSON, respData)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
 	}
 }
 
@@ -263,21 +263,24 @@ func TestGzipMiddleware_JSONRequestNoGzipResponse(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	// No Accept-Encoding -> no compression
+	if ce := resp.Header.Get("Content-Encoding"); ce == "gzip" {
+		t.Error("unexpected Content-Encoding: gzip")
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type: application/json, got %q", ct)
+	}
+
+	body, err := readBody(resp)
 	if err != nil {
 		t.Fatalf("failed to read body: %v", err)
 	}
-
 	var respData map[string]string
 	if err := json.Unmarshal(body, &respData); err != nil {
 		t.Fatalf("failed to unmarshal response JSON: %v", err)
 	}
 	if !equalMapString(originalJSON, respData) {
 		t.Errorf("expected %v, got %v", originalJSON, respData)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
 	}
 }
 
@@ -297,20 +300,23 @@ func TestGzipMiddleware_JSONRequestPlainResponseGzip(t *testing.T) {
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	body, err := decompressIfGzipped(resp)
-	if err != nil {
-		t.Fatalf("failed to decompress: %v", err)
+	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
+		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("expected Content-Type: application/json, got %q", ct)
 	}
 
+	body, err := readBody(resp)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
 	var respData map[string]string
 	if err := json.Unmarshal(body, &respData); err != nil {
 		t.Fatalf("failed to unmarshal response JSON: %v", err)
 	}
 	if !equalMapString(originalJSON, respData) {
 		t.Errorf("expected %v, got %v", originalJSON, respData)
-	}
-	if ct := resp.Header.Get("Content-Type"); ct != "application/json" {
-		t.Errorf("expected Content-Type application/json, got %q", ct)
 	}
 }
 
