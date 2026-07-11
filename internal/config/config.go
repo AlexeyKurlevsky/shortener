@@ -12,7 +12,7 @@ type Config struct {
 	ServerAddr      string `env:"SERVER_ADDRESS"`
 	BaseURL         string `env:"BASE_URL"`
 	LogLevel        string `env:"LOG" envDefault:"info"`
-	FileStoragePath string
+	FileStoragePath string `env:"FILE_STORAGE_PATH" envDefault:"storage.json"`
 }
 
 func NewConfig() *Config {
@@ -41,6 +41,10 @@ func NewConfig() *Config {
 
 	if cfgEnv.LogLevel != "" {
 		cfgFlag.LogLevel = cfgEnv.LogLevel
+	}
+
+	if cfgEnv.FileStoragePath != "" {
+		cfgFlag.FileStoragePath = cfgEnv.FileStoragePath
 	}
 
 	if !strings.HasPrefix(cfgFlag.BaseURL, "http://") && !strings.HasPrefix(cfgFlag.BaseURL, "https://") {
