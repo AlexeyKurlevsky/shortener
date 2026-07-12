@@ -82,8 +82,6 @@ func (j *JSONStorage) FindIDByURL(url string) (string, bool) {
 }
 
 // Load загружает данные из JSON-файла в память.
-// Поддерживает как новый формат (массив StorageLink), так и старый (map[string]string).
-// При обнаружении старого формата выполняет миграцию и перезаписывает файл.
 func (j *JSONStorage) Load() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -94,12 +92,10 @@ func (j *JSONStorage) Load() error {
 	}
 	defer file.Close()
 
-	// Пытаемся декодировать как массив (новый формат)
 	var links []models.StorageLink
 	dec := json.NewDecoder(file)
 	err = dec.Decode(&links)
 	if err == nil {
-		// Новый формат – заполняем карты
 		j.data = make(map[string]models.StorageLink)
 		j.urlMap = make(map[string]string)
 		for _, link := range links {
@@ -109,7 +105,6 @@ func (j *JSONStorage) Load() error {
 		return nil
 	}
 
-	// Если не массив, пробуем прочитать как map (старый формат)
 	if _, err := file.Seek(0, 0); err != nil {
 		return err
 	}
@@ -117,19 +112,17 @@ func (j *JSONStorage) Load() error {
 	dec = json.NewDecoder(file)
 	err = dec.Decode(&oldData)
 	if err == nil {
-		// Преобразуем старый формат в новый
 		j.data = make(map[string]models.StorageLink)
 		j.urlMap = make(map[string]string)
 		for id, url := range oldData {
 			link := models.StorageLink{
-				Uuid:        uuid.New().String(), // генерируем новый UUID
+				Uuid:        uuid.New().String(),
 				ShortUrl:    id,
 				OriginalUrl: url,
 			}
 			j.data[id] = link
 			j.urlMap[url] = id
 		}
-		// Перезаписываем файл в новом формате
 		return j.saveToFile()
 	}
 
@@ -140,7 +133,6 @@ func (j *JSONStorage) Load() error {
 	return err
 }
 
-// saveToFile сохраняет текущие данные в файл (вызывается только при захваченной блокировке).
 func (j *JSONStorage) saveToFile() error {
 	links := make([]models.StorageLink, 0, len(j.data))
 	for _, link := range j.data {
@@ -158,7 +150,6 @@ func (j *JSONStorage) saveToFile() error {
 	return enc.Encode(links)
 }
 
-// SaveToFile — публичный метод для принудительного сохранения (с блокировкой на запись).
 func (j *JSONStorage) SaveToFile() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()

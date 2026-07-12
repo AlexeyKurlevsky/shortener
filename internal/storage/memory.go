@@ -28,7 +28,6 @@ func (m *MemoryStorage) Save(id string, url string) error {
 		delete(m.urlMap, oldLink.OriginalUrl)
 	}
 
-	// Создаём запись в новом формате
 	link := models.StorageLink{
 		Uuid:        "", // можно оставить пустым или сгенерировать при необходимости
 		ShortUrl:    id,
@@ -63,6 +62,5 @@ func (m *MemoryStorage) FindIDByURL(url string) (string, bool) {
 	return id, ok
 }
 
-// Методы для соответствия интерфейсу (in-memory не требует сохранения)
 func (m *MemoryStorage) Load() error       { return nil }
 func (m *MemoryStorage) SaveToFile() error { return nil }
