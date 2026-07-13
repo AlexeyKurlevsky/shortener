@@ -71,6 +71,7 @@ func handleShorten(url string, storage storage.Storage) (models.ShortenLink, err
 	if shortURL, ok := storage.FindIDByURL(url); ok {
 		result.ShortUrl = shortURL
 		result.OriginalUrl = url
+		result.IsNew = false
 		return result, nil
 	}
 
@@ -88,6 +89,7 @@ func handleShorten(url string, storage storage.Storage) (models.ShortenLink, err
 
 	result.OriginalUrl = url
 	result.ShortUrl = shortURL
+	result.IsNew = true
 
 	return result, nil
 }
@@ -113,10 +115,9 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(shortURL.GetStatusCode())
 	fullLink := shortURL.GetFullLink(h.cfg.BaseURL)
 	_, _ = w.Write([]byte(fullLink))
-	return
 }
 
 func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +167,7 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+	w.WriteHeader(shortURL.GetStatusCode())
 
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))

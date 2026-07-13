@@ -1,5 +1,7 @@
 package models
 
+import "net/http"
+
 type CreateUrlRequest struct {
 	Url string `json:"url"`
 }
@@ -20,11 +22,19 @@ type ShortUrlResponse struct {
 type ShortenLink struct {
 	ShortUrl    string `json:"short_url"`
 	OriginalUrl string `json:"original_url"`
+	IsNew       bool
 }
 
 func (s *ShortenLink) GetFullLink(baseURL string) string {
 	fullLink := baseURL + "/" + s.ShortUrl
 	return fullLink
+}
+
+func (s *ShortenLink) GetStatusCode() int {
+	if s.IsNew {
+		return http.StatusCreated
+	}
+	return http.StatusOK
 }
 
 type StorageLink struct {
