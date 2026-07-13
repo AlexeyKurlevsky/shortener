@@ -9,14 +9,15 @@ import (
 )
 
 type Config struct {
-	ServerAddr      string `env:"SERVER_ADDRESS" envDefault:":8080"`
-	BaseURL         string `env:"BASE_URL" envDefault:"http://localhost:8080"`
+	ServerAddr      string `env:"SERVER_ADDRESS"`
+	BaseURL         string `env:"BASE_URL"`
 	LogLevel        string `env:"LOG" envDefault:"info"`
-	FileStoragePath string `env:"FILE_STORAGE_PATH" envDefault:"storage.json"`
+	FileStoragePath string
 }
 
 func NewConfig() *Config {
 	var cfgFlag Config
+	var cfgEnv Config
 
 	flag.StringVar(&cfgFlag.ServerAddr, "a", ":8080", "address to run server (e.g., localhost:8888)")
 	flag.StringVar(&cfgFlag.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
@@ -24,11 +25,22 @@ func NewConfig() *Config {
 	flag.StringVar(&cfgFlag.LogLevel, "l", "info", "log level")
 	flag.Parse()
 
-	// Приоритет у env
-
-	err := env.Parse(&cfgFlag)
+	err := env.Parse(&cfgEnv)
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	// Приоритет у env
+	if cfgEnv.BaseURL != "" {
+		cfgFlag.BaseURL = cfgEnv.BaseURL
+	}
+
+	if cfgEnv.ServerAddr != "" {
+		cfgFlag.ServerAddr = cfgEnv.ServerAddr
+	}
+
+	if cfgEnv.LogLevel != "" {
+		cfgFlag.LogLevel = cfgEnv.LogLevel
 	}
 
 	if !strings.HasPrefix(cfgFlag.BaseURL, "http://") && !strings.HasPrefix(cfgFlag.BaseURL, "https://") {
@@ -36,4 +48,4 @@ func NewConfig() *Config {
 	}
 
 	return &cfgFlag
-}
+}s
