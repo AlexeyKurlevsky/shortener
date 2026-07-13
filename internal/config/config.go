@@ -5,51 +5,32 @@ import (
 	"log"
 	"strings"
 
-	"github.com/caarlos0/env"
+	"github.com/caarlos0/env/v11"
 )
 
 type Config struct {
 	ServerAddr      string `env:"SERVER_ADDRESS"`
 	BaseURL         string `env:"BASE_URL"`
-	LogLevel        string `env:"LOG" envDefault:"info"`
-	FileStoragePath string `env:"FILE_STORAGE_PATH" envDefault:"storage.json"`
+	LogLevel        string `env:"LOG"`
+	FileStoragePath string `env:"FILE_STORAGE_PATH"`
 }
 
 func NewConfig() *Config {
-	var cfgFlag Config
-	var cfgEnv Config
+	cfg := &Config{}
 
-	flag.StringVar(&cfgFlag.ServerAddr, "a", ":8080", "address to run server (e.g., localhost:8888)")
-	flag.StringVar(&cfgFlag.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
-	flag.StringVar(&cfgFlag.FileStoragePath, "f", "storage.json", "path file storage")
-	flag.StringVar(&cfgFlag.LogLevel, "l", "info", "log level")
+	flag.StringVar(&cfg.ServerAddr, "a", ":8080", "address to run server (e.g., localhost:8888)")
+	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
+	flag.StringVar(&cfg.FileStoragePath, "f", "storage.json", "path file storage")
+	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
 	flag.Parse()
 
-	err := env.Parse(&cfgEnv)
-	if err != nil {
+	if err := env.Parse(cfg); err != nil {
 		log.Fatal(err)
 	}
 
-	// Приоритет у env
-	if cfgEnv.BaseURL != "" {
-		cfgFlag.BaseURL = cfgEnv.BaseURL
+	if !strings.HasPrefix(cfg.BaseURL, "http://") && !strings.HasPrefix(cfg.BaseURL, "https://") {
+		cfg.BaseURL = "http://" + cfg.BaseURL
 	}
 
-	if cfgEnv.ServerAddr != "" {
-		cfgFlag.ServerAddr = cfgEnv.ServerAddr
-	}
-
-	if cfgEnv.LogLevel != "" {
-		cfgFlag.LogLevel = cfgEnv.LogLevel
-	}
-
-	if cfgEnv.FileStoragePath != "" {
-		cfgFlag.FileStoragePath = cfgEnv.FileStoragePath
-	}
-
-	if !strings.HasPrefix(cfgFlag.BaseURL, "http://") && !strings.HasPrefix(cfgFlag.BaseURL, "https://") {
-		cfgFlag.BaseURL = "http://" + cfgFlag.BaseURL
-	}
-
-	return &cfgFlag
+	return cfg
 }
