@@ -48,4 +48,4 @@ func NewConfig() *Config {
 	}
 
 	return &cfgFlag
-}s
+}
