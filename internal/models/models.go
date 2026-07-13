@@ -22,7 +22,7 @@ type ShortUrlResponse struct {
 type ShortenLink struct {
 	ShortUrl    string `json:"short_url"`
 	OriginalUrl string `json:"original_url"`
-	IsNew       bool
+	IsNew       bool   `json:"-"` // не сохранять в json
 }
 
 func (s *ShortenLink) GetFullLink(baseURL string) string {
