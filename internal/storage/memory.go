@@ -19,22 +19,24 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) Save(id string, url string) error {
+func (m *MemoryStorage) Save(shortUrl string, url string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Если id уже существует, удаляем старую связь из urlMap
-	if oldLink, ok := m.data[id]; ok {
+	if oldLink, ok := m.data[shortUrl]; ok {
 		delete(m.urlMap, oldLink.OriginalUrl)
 	}
 
 	link := models.StorageLink{
-		Uuid:        "", // можно оставить пустым или сгенерировать при необходимости
-		ShortUrl:    id,
-		OriginalUrl: url,
+		Uuid: "", // можно оставить пустым или сгенерировать при необходимости
+		ShortenLink: models.ShortenLink{
+			ShortUrl:    shortUrl,
+			OriginalUrl: url,
+		},
 	}
-	m.data[id] = link
-	m.urlMap[url] = id
+	m.data[shortUrl] = link
+	m.urlMap[url] = shortUrl
 
 	return nil
 }
@@ -48,10 +50,10 @@ func (m *MemoryStorage) Get(id string) (string, error) {
 	return "", ErrNotFound
 }
 
-func (m *MemoryStorage) Exists(id string) bool {
+func (m *MemoryStorage) Exists(shortUrl string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, ok := m.data[id]
+	_, ok := m.data[shortUrl]
 	return ok
 }
 

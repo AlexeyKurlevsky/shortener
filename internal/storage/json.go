@@ -43,9 +43,11 @@ func (j *JSONStorage) Save(id string, url string) error {
 
 	linkUuid := uuid.New().String()
 	link := models.StorageLink{
-		Uuid:        linkUuid,
-		ShortUrl:    id,
-		OriginalUrl: url,
+		Uuid: linkUuid,
+		ShortenLink: models.ShortenLink{
+			ShortUrl:    id,
+			OriginalUrl: url,
+		},
 	}
 	j.data[id] = link
 	j.urlMap[url] = id
@@ -104,28 +106,6 @@ func (j *JSONStorage) Load() error {
 		}
 		return nil
 	}
-
-	if _, err := file.Seek(0, 0); err != nil {
-		return err
-	}
-	var oldData map[string]string
-	dec = json.NewDecoder(file)
-	err = dec.Decode(&oldData)
-	if err == nil {
-		j.data = make(map[string]models.StorageLink)
-		j.urlMap = make(map[string]string)
-		for id, url := range oldData {
-			link := models.StorageLink{
-				Uuid:        uuid.New().String(),
-				ShortUrl:    id,
-				OriginalUrl: url,
-			}
-			j.data[id] = link
-			j.urlMap[url] = id
-		}
-		return j.saveToFile()
-	}
-
 	// Если файл пустой или содержит только EOF, считаем, что данных нет
 	if err == io.EOF {
 		return nil

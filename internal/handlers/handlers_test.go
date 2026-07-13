@@ -121,7 +121,7 @@ func TestCreateShortURL(t *testing.T) {
 			name:           "existing URL",
 			body:           "https://example.com",
 			mockFind:       func(string) (string, bool) { return "abc123", true },
-			wantStatus:     http.StatusOK,
+			wantStatus:     http.StatusCreated,
 			wantBodyPrefix: "http://localhost:8080/abc123",
 		},
 	}

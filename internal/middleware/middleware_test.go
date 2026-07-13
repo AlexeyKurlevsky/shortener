@@ -18,7 +18,6 @@ func testHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read error", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "text/plain")
 	if len(body) > 0 {
 		_, _ = w.Write(body)
 	} else {
@@ -54,12 +53,12 @@ func TestGzipMiddleware_ResponseGzip(t *testing.T) {
 	handler := GzipMiddleware(http.HandlerFunc(testHandler))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Content-Type", "application/json") // must match middleware condition
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	// Expect Content-Encoding: gzip
 	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
 		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
 	}
@@ -76,12 +75,13 @@ func TestGzipMiddleware_ResponseGzip(t *testing.T) {
 func TestGzipMiddleware_ResponseNoGzip(t *testing.T) {
 	handler := GzipMiddleware(http.HandlerFunc(testHandler))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	// No Accept-Encoding -> no compression regardless of Content-Type
+	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	// No Accept-Encoding -> no compression
 	if ce := resp.Header.Get("Content-Encoding"); ce == "gzip" {
 		t.Error("unexpected Content-Encoding: gzip")
 	}
@@ -108,13 +108,13 @@ func TestGzipMiddleware_RequestGzip(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Content-Type", "application/json") // required for decompression
 
 	handler := GzipMiddleware(http.HandlerFunc(testHandler))
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, req)
 
 	resp := w.Result()
-	// Expect compressed response because Accept-Encoding: gzip
 	if ce := resp.Header.Get("Content-Encoding"); ce != "gzip" {
 		t.Errorf("expected Content-Encoding: gzip, got %q", ce)
 	}
@@ -130,6 +130,7 @@ func TestGzipMiddleware_RequestGzip(t *testing.T) {
 func TestGzipMiddleware_RequestNoGzip(t *testing.T) {
 	originalBody := "Plain request body"
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(originalBody))
+	req.Header.Set("Content-Type", "application/json") // not needed but harmless
 	handler := GzipMiddleware(http.HandlerFunc(testHandler))
 	w := httptest.NewRecorder()
 
@@ -153,6 +154,7 @@ func TestGzipMiddleware_RequestGzipInvalidData(t *testing.T) {
 	invalidData := "this is not gzip"
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(invalidData))
 	req.Header.Set("Content-Encoding", "gzip")
+	req.Header.Set("Content-Type", "application/json") // must be set to trigger decompression
 
 	handler := GzipMiddleware(http.HandlerFunc(testHandler))
 	w := httptest.NewRecorder()
@@ -178,6 +180,7 @@ func TestGzipMiddleware_Combined(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/", buf)
 	req.Header.Set("Content-Encoding", "gzip")
 	req.Header.Set("Accept-Encoding", "gzip")
+	req.Header.Set("Content-Type", "application/json")
 
 	handler := GzipMiddleware(http.HandlerFunc(testHandler))
 	w := httptest.NewRecorder()

@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"math/rand"
 	"net/http"
@@ -49,43 +50,73 @@ func IsValidURL(str string) bool {
 	return true
 }
 
+func normalizeURL(raw string) string {
+	// 1. Удаляем пробелы вокруг (аналог strip)
+	trimmed := strings.TrimSpace(raw)
+
+	// 2. Убираем завершающий слэш, если он есть (кроме корневого "/")
+	return strings.TrimSuffix(trimmed, "/")
+}
+
+func handleShorten(url string, storage storage.Storage) (models.ShortenLink, error) {
+	var result models.ShortenLink
+
+	// Проверяем валидность url
+	if !IsValidURL(url) {
+		return result, newInvalidURLError()
+	}
+	url = normalizeURL(url)
+
+	// Ищем url в уже созданных ссылках
+	if shortURL, ok := storage.FindIDByURL(url); ok {
+		result.ShortUrl = shortURL
+		result.OriginalUrl = url
+		return result, nil
+	}
+
+	// Если не нашли, то генерируем новую
+	var shortURL string
+	for {
+		shortURL = generateID()
+		if !storage.Exists(shortURL) {
+			break
+		}
+	}
+	if err := storage.Save(shortURL, url); err != nil {
+		return result, newStorageSaveError()
+	}
+
+	result.OriginalUrl = url
+	result.ShortUrl = shortURL
+
+	return result, nil
+}
+
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
+	var shortURL models.ShortenLink
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
 		return
 	}
 	link := string(body)
-	if !IsValidURL(link) {
-		http.Error(w, "Invalid link", http.StatusBadRequest)
-		return
-	}
 
-	if id, ok := h.storage.FindIDByURL(link); ok {
-		shortURL := h.cfg.BaseURL + "/" + id
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(shortURL))
-		return
-	}
-
-	// Генерируем новый ID
-	var id string
-	for {
-		id = generateID()
-		if !h.storage.Exists(id) {
-			break
+	shortURL, err = handleShorten(link, h.storage)
+	if err != nil {
+		var appErr models.AppError
+		if errors.As(err, &appErr) {
+			http.Error(w, appErr.Error(), appErr.Status)
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
-	}
-	if err := h.storage.Save(id, link); err != nil {
-		http.Error(w, "Failed to save URL", http.StatusInternalServerError)
 		return
 	}
 
-	shortURL := h.cfg.BaseURL + "/" + id
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
-	_, _ = w.Write([]byte(shortURL))
+	fullLink := shortURL.GetFullLink(h.cfg.BaseURL)
+	_, _ = w.Write([]byte(fullLink))
+	return
 }
 
 func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
@@ -109,6 +140,8 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateUrlRequest
+	var shortURL models.ShortenLink
+
 	dec := json.NewDecoder(r.Body)
 
 	if err := dec.Decode(&req); err != nil {
@@ -117,42 +150,21 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !IsValidURL(req.Url) {
-		http.Error(w, "Invalid link", http.StatusBadRequest)
-		return
-	}
-
-	if id, ok := h.storage.FindIDByURL(req.Url); ok {
-		shortURL := h.cfg.BaseURL + "/" + id
-		resp := models.ShortUrlResponse{
-			Result: shortURL,
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusCreated)
-
-		if err := json.NewEncoder(w).Encode(resp); err != nil {
-			logger.Log.Error("failed to encode response", zap.Error(err))
+	shortURL, err := handleShorten(req.Url, h.storage)
+	if err != nil {
+		var appErr models.AppError
+		if errors.As(err, &appErr) {
+			http.Error(w, appErr.Error(), appErr.Status)
+		} else {
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
 		return
 	}
 
-	// Генерируем новый ID
-	var id string
-	for {
-		id = generateID()
-		if !h.storage.Exists(id) {
-			break
-		}
-	}
-	if err := h.storage.Save(id, req.Url); err != nil {
-		http.Error(w, "Failed to save URL", http.StatusInternalServerError)
-		return
-	}
-
-	shortURL := h.cfg.BaseURL + "/" + id
 	resp := models.ShortUrlResponse{
-		Result: shortURL,
+		Result: shortURL.GetFullLink(h.cfg.BaseURL),
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 
