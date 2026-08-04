@@ -22,8 +22,39 @@ func TestJSONStorage(t *testing.T) {
 	s, err := NewJSONStorage(tmp.Name())
 	require.NoError(t, err)
 	testStorage(t, s)
+
+	// Дополнительно проверяем корректность urlMap при перезаписи
+	t.Run("overwrite and urlMap", func(t *testing.T) {
+		// сохраняем abc -> example.com
+		err := s.Save("abc", "https://example.com")
+		require.NoError(t, err)
+
+		// проверяем, что FindIDByURL находит
+		id, ok := s.FindIDByURL("https://example.com")
+		assert.True(t, ok)
+		assert.Equal(t, "abc", id)
+
+		// перезаписываем abc -> new.com
+		err = s.Save("abc", "https://new.com")
+		require.NoError(t, err)
+
+		// старый URL больше не должен находиться
+		_, ok = s.FindIDByURL("https://example.com")
+		assert.False(t, ok, "старый URL не должен быть найден после перезаписи")
+
+		// новый URL должен находиться
+		id, ok = s.FindIDByURL("https://new.com")
+		assert.True(t, ok)
+		assert.Equal(t, "abc", id)
+
+		// проверяем, что Get возвращает новый URL
+		val, err := s.Get("abc")
+		assert.NoError(t, err)
+		assert.Equal(t, "https://new.com", val)
+	})
 }
 
+// Общий тест для всех хранилищ
 func testStorage(t *testing.T, s Storage) {
 	err := s.Save("abc", "https://example.com")
 	assert.NoError(t, err)

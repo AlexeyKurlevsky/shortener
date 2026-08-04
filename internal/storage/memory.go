@@ -1,41 +1,59 @@
 package storage
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/models"
+)
 
 type MemoryStorage struct {
 	mu     sync.RWMutex
-	data   map[string]string
-	urlMap map[string]string
+	data   map[string]models.StorageLink // ключ: shortUrl
+	urlMap map[string]string             // ключ: originalUrl -> shortUrl
 }
 
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		data:   make(map[string]string),
+		data:   make(map[string]models.StorageLink),
 		urlMap: make(map[string]string),
 	}
 }
 
-func (m *MemoryStorage) Save(id string, url string) error {
+func (m *MemoryStorage) Save(shortUrl string, url string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.data[id] = url
-	m.urlMap[url] = id
+
+	// Если id уже существует, удаляем старую связь из urlMap
+	if oldLink, ok := m.data[shortUrl]; ok {
+		delete(m.urlMap, oldLink.OriginalUrl)
+	}
+
+	link := models.StorageLink{
+		Uuid: "", // можно оставить пустым или сгенерировать при необходимости
+		ShortenLink: models.ShortenLink{
+			ShortUrl:    shortUrl,
+			OriginalUrl: url,
+		},
+	}
+	m.data[shortUrl] = link
+	m.urlMap[url] = shortUrl
+
 	return nil
 }
 
 func (m *MemoryStorage) Get(id string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if val, ok := m.data[id]; ok {
-		return val, nil
+	if link, ok := m.data[id]; ok {
+		return link.OriginalUrl, nil
 	}
 	return "", ErrNotFound
 }
 
-func (m *MemoryStorage) Exists(id string) bool {
+func (m *MemoryStorage) Exists(shortUrl string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, ok := m.data[id]
+	_, ok := m.data[shortUrl]
 	return ok
 }
 

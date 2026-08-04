@@ -2,7 +2,6 @@ package logger
 
 import (
 	"net/http"
-	"time"
 
 	"go.uber.org/zap"
 )
@@ -24,41 +23,19 @@ func Initialize(level string) error {
 	return nil
 }
 
-type responseWriter struct {
+type MyResponseWriter struct {
 	http.ResponseWriter
-	status int
-	size   int
+	Status int
+	Size   int
 }
 
-func (rw *responseWriter) WriteHeader(status int) {
-	rw.status = status
+func (rw *MyResponseWriter) WriteHeader(status int) {
+	rw.Status = status
 	rw.ResponseWriter.WriteHeader(status)
 }
 
-func (rw *responseWriter) Write(b []byte) (int, error) {
+func (rw *MyResponseWriter) Write(b []byte) (int, error) {
 	n, err := rw.ResponseWriter.Write(b)
-	rw.size += n
+	rw.Size += n
 	return n, err
-}
-
-func RequestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
-
-		rw := &responseWriter{
-			ResponseWriter: w,
-			status:         http.StatusOK,
-		}
-
-		next.ServeHTTP(rw, r)
-
-		// Log all required details.
-		Log.Info("HTTP request",
-			zap.String("method", r.Method),
-			zap.String("uri", r.URL.RequestURI()),
-			zap.Duration("duration", time.Since(start)),
-			zap.Int("status", rw.status),
-			zap.Int("response_size", rw.size),
-		)
-	})
 }

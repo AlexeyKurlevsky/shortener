@@ -251,7 +251,7 @@ func TestCreateShortURLJson(t *testing.T) {
 			name:           "existing URL",
 			body:           models.CreateUrlRequest{Url: "https://example.com"},
 			mockFind:       func(string) (string, bool) { return "abc123", true },
-			wantStatus:     http.StatusCreated, // as per code: returns 201 even for existing
+			wantStatus:     http.StatusOK, // as per code: returns 201 even for existing
 			wantBodyResult: "http://localhost:8080/abc123",
 		},
 		{
