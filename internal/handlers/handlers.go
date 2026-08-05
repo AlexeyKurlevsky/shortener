@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,13 +18,18 @@ import (
 	"go.uber.org/zap"
 )
 
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
 type Handler struct {
 	storage storage.Storage
 	cfg     *config.Config
+	db      Pinger
 }
 
-func NewHandler(storage storage.Storage, cfg *config.Config) *Handler {
-	return &Handler{storage: storage, cfg: cfg}
+func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler {
+	return &Handler{storage: storage, cfg: cfg, db: db}
 }
 
 func generateID() string {
@@ -172,4 +178,14 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
+}
+
+func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if err := h.db.Ping(ctx); err != nil {
+		http.Error(w, "Database connection failed", http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("OK"))
 }

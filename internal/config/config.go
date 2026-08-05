@@ -13,6 +13,7 @@ type Config struct {
 	BaseURL         string `env:"BASE_URL"`
 	LogLevel        string `env:"LOG"`
 	FileStoragePath string `env:"FILE_STORAGE_PATH"`
+	DatabaseDSN     string `env:"DATABASE_DSN"`
 }
 
 func NewConfig() *Config {
@@ -22,6 +23,7 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
 	flag.StringVar(&cfg.FileStoragePath, "f", "storage.json", "path file storage")
 	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://posetgrs:postgres@localhost:5432/shortener", "DB DSN")
 	flag.Parse()
 
 	if err := env.Parse(cfg); err != nil {

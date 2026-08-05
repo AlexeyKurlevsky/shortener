@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -15,6 +16,10 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/go-chi/chi/v5"
 )
+
+type dummyPinger struct{}
+
+func (d dummyPinger) Ping(ctx context.Context) error { return nil }
 
 type mockStorage struct {
 	findIDByURLFunc func(url string) (string, bool)
@@ -72,7 +77,18 @@ func setupTest(mock *mockStorage) *Handler {
 		ServerAddr: ":8080",
 		BaseURL:    "http://localhost:8080",
 	}
-	return NewHandler(mock, cfg)
+	return NewHandler(mock, cfg, dummyPinger{})
+}
+
+type mockPinger struct {
+	pingFunc func(ctx context.Context) error
+}
+
+func (m mockPinger) Ping(ctx context.Context) error {
+	if m.pingFunc != nil {
+		return m.pingFunc(ctx)
+	}
+	return nil
 }
 
 func TestIsValidURL(t *testing.T) {
@@ -323,6 +339,57 @@ func TestCreateShortURLJson(t *testing.T) {
 					if resp.Result != tt.wantBodyResult {
 						t.Errorf("result = %q, want %q", resp.Result, tt.wantBodyResult)
 					}
+				}
+			}
+		})
+	}
+}
+
+func TestPingHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		pingError  error
+		wantStatus int
+	}{
+		{
+			name:       "successful ping",
+			pingError:  nil,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "failed ping",
+			pingError:  errors.New("connection refused"),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Создаём мок с нужным поведением
+			mock := mockPinger{
+				pingFunc: func(ctx context.Context) error {
+					return tt.pingError
+				},
+			}
+			cfg := &config.Config{ServerAddr: ":8080", BaseURL: "http://localhost:8080"}
+			// storage передаём nil, так как он не используется в PingHandler
+			h := NewHandler(nil, cfg, mock)
+
+			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+			w := httptest.NewRecorder()
+			h.PingHandler(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				body, _ := io.ReadAll(res.Body)
+				if string(body) != "OK" {
+					t.Errorf("body = %q, want %q", body, "OK")
 				}
 			}
 		})

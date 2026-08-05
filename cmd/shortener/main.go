@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
+	"github.com/AlexeyKurlevsky/shortener/internal/config/db"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
@@ -30,7 +32,14 @@ func main() {
 		st = storage.NewMemoryStorage()
 	}
 
-	h := handlers.NewHandler(st, cfg)
+	ctx := context.Background()
+	database, err := db.NewDB(ctx, cfg.DatabaseDSN)
+	if err != nil {
+		log.Fatalf("Failed to connect to database: %v", err)
+	}
+	defer database.Close()
+
+	h := handlers.NewHandler(st, cfg, database)
 	r := server.NewRouter(h)
 
 	logger.Log.Info("Config",
