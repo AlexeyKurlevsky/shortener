@@ -23,7 +23,7 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.BaseURL, "b", "http://localhost:8080", "base URL for shortened links (e.g., http://localhost:8000)")
 	flag.StringVar(&cfg.FileStoragePath, "f", "storage.json", "path file storage")
 	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
-	flag.StringVar(&cfg.DatabaseDSN, "d", "postgres://posetgrs:postgres@localhost:5432/shortener", "DB DSN")
+	flag.StringVar(&cfg.DatabaseDSN, "d", "", "DB DSN")
 	flag.Parse()
 
 	if err := env.Parse(cfg); err != nil {

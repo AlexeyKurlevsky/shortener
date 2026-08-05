@@ -22,7 +22,7 @@ func main() {
 	}
 
 	var st storage.Storage
-	if cfg.FileStoragePath != "" {
+	if cfg.FileStoragePath != "" && cfg.DatabaseDSN == "" {
 		s, err := storage.NewJSONStorage(cfg.FileStoragePath)
 		if err != nil {
 			logger.Log.Fatal("Failed to init JSON storage", zap.Error(err))
@@ -32,12 +32,17 @@ func main() {
 		st = storage.NewMemoryStorage()
 	}
 
-	ctx := context.Background()
-	database, err := db.NewDB(ctx, cfg.DatabaseDSN)
-	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+	var database handlers.Pinger
+
+	if cfg.DatabaseDSN != "" {
+		ctx := context.Background()
+		d, err := db.NewDB(ctx, cfg.DatabaseDSN)
+		if err != nil {
+			log.Fatalf("Failed to connect to database: %v", err)
+		}
+		defer d.Close()
+		database = d
 	}
-	defer database.Close()
 
 	h := handlers.NewHandler(st, cfg, database)
 	r := server.NewRouter(h)
