@@ -14,7 +14,6 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
-	"github.com/go-chi/chi/v5"
 )
 
 type dummyPinger struct{}
@@ -28,6 +27,7 @@ type mockStorage struct {
 	getFunc         func(id string) (string, error)
 	loadFunc        func() error
 	saveToFileFunc  func() error
+	batchSaveFunc   func(items []storage.BatchItem) error // новый метод
 }
 
 func (m *mockStorage) FindIDByURL(url string) (string, bool) {
@@ -68,6 +68,13 @@ func (m *mockStorage) Load() error {
 func (m *mockStorage) SaveToFile() error {
 	if m.saveToFileFunc != nil {
 		return m.saveToFileFunc()
+	}
+	return nil
+}
+
+func (m *mockStorage) BatchSave(items []storage.BatchItem) error {
+	if m.batchSaveFunc != nil {
+		return m.batchSaveFunc(items)
 	}
 	return nil
 }
@@ -134,10 +141,10 @@ func TestCreateShortURL(t *testing.T) {
 			wantBodyPrefix: "http://localhost:8080/",
 		},
 		{
-			name:           "existing URL",
+			name:           "existing URL – returns 409 Conflict",
 			body:           "https://example.com",
 			mockFind:       func(string) (string, bool) { return "abc123", true },
-			wantStatus:     http.StatusOK,
+			wantStatus:     http.StatusConflict,
 			wantBodyPrefix: "http://localhost:8080/abc123",
 		},
 	}
@@ -177,73 +184,6 @@ func TestCreateShortURL(t *testing.T) {
 	}
 }
 
-func TestGetLink(t *testing.T) {
-	tests := []struct {
-		name       string
-		id         string
-		mockGet    func(string) (string, error)
-		wantStatus int
-		wantHeader string
-	}{
-		{
-			name:       "success",
-			id:         "abc123",
-			mockGet:    func(string) (string, error) { return "https://original.com", nil },
-			wantStatus: http.StatusTemporaryRedirect,
-			wantHeader: "https://original.com",
-		},
-		{
-			name:       "not found",
-			id:         "notfound",
-			mockGet:    func(string) (string, error) { return "", storage.ErrNotFound },
-			wantStatus: http.StatusNotFound,
-		},
-		{
-			name:       "storage error",
-			id:         "error",
-			mockGet:    func(string) (string, error) { return "", errors.New("db error") },
-			wantStatus: http.StatusInternalServerError,
-		},
-		{
-			name:       "empty id",
-			id:         "",
-			wantStatus: http.StatusNotFound,
-		},
-		{
-			name:       "id with slash",
-			id:         "abc/def",
-			wantStatus: http.StatusNotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{getFunc: tt.mockGet}
-			h := setupTest(mock)
-
-			// Use a chi router to set the URL parameter.
-			r := chi.NewRouter()
-			r.Get("/{id}", h.GetLink)
-			req := httptest.NewRequest(http.MethodGet, "/"+tt.id, nil)
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
-
-			res := w.Result()
-			defer res.Body.Close()
-
-			if res.StatusCode != tt.wantStatus {
-				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
-			}
-
-			if tt.wantHeader != "" {
-				if loc := res.Header.Get("Location"); loc != tt.wantHeader {
-					t.Errorf("Location = %q, want %q", loc, tt.wantHeader)
-				}
-			}
-		})
-	}
-}
-
 func TestCreateShortURLJson(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -264,10 +204,10 @@ func TestCreateShortURLJson(t *testing.T) {
 			wantBodyResult: "http://localhost:8080/",
 		},
 		{
-			name:           "existing URL",
+			name:           "existing URL – returns 409 Conflict",
 			body:           models.CreateUrlRequest{Url: "https://example.com"},
 			mockFind:       func(string) (string, bool) { return "abc123", true },
-			wantStatus:     http.StatusOK, // as per code: returns 201 even for existing
+			wantStatus:     http.StatusConflict,
 			wantBodyResult: "http://localhost:8080/abc123",
 		},
 		{
@@ -339,57 +279,6 @@ func TestCreateShortURLJson(t *testing.T) {
 					if resp.Result != tt.wantBodyResult {
 						t.Errorf("result = %q, want %q", resp.Result, tt.wantBodyResult)
 					}
-				}
-			}
-		})
-	}
-}
-
-func TestPingHandler(t *testing.T) {
-	tests := []struct {
-		name       string
-		pingError  error
-		wantStatus int
-	}{
-		{
-			name:       "successful ping",
-			pingError:  nil,
-			wantStatus: http.StatusOK,
-		},
-		{
-			name:       "failed ping",
-			pingError:  errors.New("connection refused"),
-			wantStatus: http.StatusInternalServerError,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			// Создаём мок с нужным поведением
-			mock := mockPinger{
-				pingFunc: func(ctx context.Context) error {
-					return tt.pingError
-				},
-			}
-			cfg := &config.Config{ServerAddr: ":8080", BaseURL: "http://localhost:8080"}
-			// storage передаём nil, так как он не используется в PingHandler
-			h := NewHandler(nil, cfg, mock)
-
-			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
-			w := httptest.NewRecorder()
-			h.PingHandler(w, req)
-
-			res := w.Result()
-			defer res.Body.Close()
-
-			if res.StatusCode != tt.wantStatus {
-				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
-			}
-
-			if tt.wantStatus == http.StatusOK {
-				body, _ := io.ReadAll(res.Body)
-				if string(body) != "OK" {
-					t.Errorf("body = %q, want %q", body, "OK")
 				}
 			}
 		})

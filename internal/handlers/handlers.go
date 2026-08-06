@@ -67,21 +67,21 @@ func normalizeURL(raw string) string {
 func handleShorten(url string, storage storage.Storage) (models.ShortenLink, error) {
 	var result models.ShortenLink
 
-	// Проверяем валидность url
 	if !IsValidURL(url) {
 		return result, newInvalidURLError()
 	}
 	url = normalizeURL(url)
 
-	// Ищем url в уже созданных ссылках
+	// Проверяем, существует ли URL
 	if shortURL, ok := storage.FindIDByURL(url); ok {
-		result.ShortUrl = shortURL
-		result.OriginalUrl = url
-		result.IsNew = false
-		return result, nil
+		// Возвращаем ошибку с существующим ID
+		return result, &DuplicateURLError{
+			ExistingID:  shortURL,
+			OriginalURL: url,
+		}
 	}
 
-	// Если не нашли, то генерируем новую
+	// Генерируем новый ID
 	var shortURL string
 	for {
 		shortURL = generateID()
@@ -101,7 +101,6 @@ func handleShorten(url string, storage storage.Storage) (models.ShortenLink, err
 }
 
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	var shortURL models.ShortenLink
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
@@ -109,8 +108,17 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	link := string(body)
 
-	shortURL, err = handleShorten(link, h.storage)
+	shortURL, err := handleShorten(link, h.storage)
 	if err != nil {
+		var dupErr *DuplicateURLError
+		if errors.As(err, &dupErr) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusConflict)
+			fullLink := dupErr.ExistingID
+			fullLink = h.cfg.BaseURL + "/" + dupErr.ExistingID
+			_, _ = w.Write([]byte(fullLink))
+			return
+		}
 		var appErr models.AppError
 		if errors.As(err, &appErr) {
 			http.Error(w, appErr.Error(), appErr.Status)
@@ -147,10 +155,7 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateUrlRequest
-	var shortURL models.ShortenLink
-
 	dec := json.NewDecoder(r.Body)
-
 	if err := dec.Decode(&req); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
@@ -159,6 +164,18 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 
 	shortURL, err := handleShorten(req.Url, h.storage)
 	if err != nil {
+		var dupErr *DuplicateURLError
+		if errors.As(err, &dupErr) {
+			resp := models.ShortUrlResponse{
+				Result: h.cfg.BaseURL + "/" + dupErr.ExistingID,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				logger.Log.Error("failed to encode response", zap.Error(err))
+			}
+			return
+		}
 		var appErr models.AppError
 		if errors.As(err, &appErr) {
 			http.Error(w, appErr.Error(), appErr.Status)
@@ -171,10 +188,8 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	resp := models.ShortUrlResponse{
 		Result: shortURL.GetFullLink(h.cfg.BaseURL),
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(shortURL.GetStatusCode())
-
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}

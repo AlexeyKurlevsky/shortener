@@ -14,3 +14,12 @@ func newInvalidURLError() error {
 func newStorageSaveError() error {
 	return models.AppError{Status: http.StatusInternalServerError, Err: errors.New("can't save link in storage")}
 }
+
+type DuplicateURLError struct {
+	ExistingID  string
+	OriginalURL string
+}
+
+func (e DuplicateURLError) Error() string {
+	return "URL already exists"
+}
