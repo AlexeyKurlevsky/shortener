@@ -194,3 +194,82 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte("OK"))
 }
+
+func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
+	// 1. Читаем тело
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusInternalServerError)
+		return
+	}
+	defer r.Body.Close()
+
+	// 2. Декодируем JSON
+	var reqItems []models.BatchRequestItem
+	if err := json.Unmarshal(body, &reqItems); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(reqItems) == 0 {
+		http.Error(w, "Empty batch", http.StatusBadRequest)
+		return
+	}
+
+	// 3. Валидация и нормализация
+	urlMap := make(map[string]string)
+	newItems := make([]storage.BatchItem, 0)
+
+	for _, item := range reqItems {
+		if !IsValidURL(item.OriginalURL) {
+			http.Error(w, "Invalid URL: "+item.OriginalURL, http.StatusBadRequest)
+			return
+		}
+		norm := normalizeURL(item.OriginalURL)
+		if _, ok := urlMap[norm]; ok {
+			continue // дубликат в батче
+		}
+		// Проверяем в хранилище
+		if id, ok := h.storage.FindIDByURL(norm); ok {
+			urlMap[norm] = id
+		} else {
+			// Генерируем новый ID
+			var newID string
+			for {
+				newID = generateID()
+				if !h.storage.Exists(newID) {
+					break
+				}
+			}
+			urlMap[norm] = newID
+			newItems = append(newItems, storage.BatchItem{ID: newID, URL: norm})
+		}
+	}
+
+	// 4. Сохраняем новые пары атомарно
+	if len(newItems) > 0 {
+		if err := h.storage.BatchSave(newItems); err != nil {
+			logger.Log.Error("failed to save batch", zap.Error(err))
+			http.Error(w, "Failed to save batch", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// 5. Формируем ответ
+	respItems := make([]models.BatchResponseItem, len(reqItems))
+	for i, item := range reqItems {
+		norm := normalizeURL(item.OriginalURL)
+		id := urlMap[norm]
+		fullURL := h.cfg.BaseURL + "/" + id
+		respItems[i] = models.BatchResponseItem{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      fullURL,
+		}
+	}
+
+	// 6. Отправляем ответ
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	if err := json.NewEncoder(w).Encode(respItems); err != nil {
+		logger.Log.Error("failed to encode response", zap.Error(err))
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
+	"github.com/google/uuid"
 )
 
 type MemoryStorage struct {
@@ -66,3 +67,20 @@ func (m *MemoryStorage) FindIDByURL(url string) (string, bool) {
 
 func (m *MemoryStorage) Load() error       { return nil }
 func (m *MemoryStorage) SaveToFile() error { return nil }
+
+func (m *MemoryStorage) BatchSave(items []BatchItem) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, item := range items {
+		link := models.StorageLink{
+			Uuid: uuid.New().String(),
+			ShortenLink: models.ShortenLink{
+				ShortUrl:    item.ID,
+				OriginalUrl: item.URL,
+			},
+		}
+		m.data[item.ID] = link
+		m.urlMap[item.URL] = item.ID
+	}
+	return nil
+}

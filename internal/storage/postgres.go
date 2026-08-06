@@ -97,3 +97,22 @@ func (p *PostgresStorage) SaveToFile() error {
 func (p *PostgresStorage) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
+
+func (p *PostgresStorage) BatchSave(items []BatchItem) error {
+	ctx := context.Background()
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	for _, item := range items {
+		_, err = tx.ExecContext(ctx,
+			`INSERT INTO urls (id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING`,
+			item.ID, item.URL)
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}

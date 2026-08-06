@@ -89,6 +89,27 @@ func testStorage(t *testing.T, s Storage) {
 		assert.Equal(t, "https://new.com", val2)
 	}
 
+	t.Run("BatchSave", func(t *testing.T) {
+		items := []BatchItem{
+			{ID: "batch1", URL: "https://batch1.com"},
+			{ID: "batch2", URL: "https://batch2.com"},
+		}
+		err := s.BatchSave(items)
+		assert.NoError(t, err)
+
+		val, err := s.Get("batch1")
+		assert.NoError(t, err)
+		assert.Equal(t, "https://batch1.com", val)
+
+		val, err = s.Get("batch2")
+		assert.NoError(t, err)
+		assert.Equal(t, "https://batch2.com", val)
+
+		id, ok := s.FindIDByURL("https://batch1.com")
+		assert.True(t, ok)
+		assert.Equal(t, "batch1", id)
+	})
+
 	err = s.Save("abc", "https://example.com")
 	assert.NoError(t, err)
 	id, ok := s.FindIDByURL("https://example.com")
