@@ -27,7 +27,7 @@ type mockStorage struct {
 	getFunc         func(id string) (string, error)
 	loadFunc        func() error
 	saveToFileFunc  func() error
-	batchSaveFunc   func(items []storage.BatchItem) error // новый метод}
+	batchSaveFunc   func(items []storage.BatchItem) error
 }
 
 func (m *mockStorage) FindIDByURL(url string) (string, bool) {
