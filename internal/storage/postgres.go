@@ -51,17 +51,17 @@ func (p *PostgresStorage) Close() error {
 	return p.db.Close()
 }
 
-func (p *PostgresStorage) Save(id, url string) error {
-	_, err := p.db.ExecContext(context.Background(),
+func (p *PostgresStorage) Save(ctx context.Context, id, url string) error {
+	_, err := p.db.ExecContext(ctx,
 		`INSERT INTO urls (id, original_url) VALUES ($1, $2)
-		 ON CONFLICT (original_url) DO NOTHING`,
+         ON CONFLICT (original_url) DO NOTHING`,
 		id, url)
 	return err
 }
 
-func (p *PostgresStorage) Get(id string) (string, error) {
+func (p *PostgresStorage) Get(ctx context.Context, id string) (string, error) {
 	var original string
-	err := p.db.QueryRowContext(context.Background(),
+	err := p.db.QueryRowContext(ctx,
 		`SELECT original_url FROM urls WHERE id = $1`, id).Scan(&original)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
@@ -69,9 +69,9 @@ func (p *PostgresStorage) Get(id string) (string, error) {
 	return original, err
 }
 
-func (p *PostgresStorage) FindIDByURL(url string) (string, bool) {
+func (p *PostgresStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
 	var id string
-	err := p.db.QueryRowContext(context.Background(),
+	err := p.db.QueryRowContext(ctx,
 		`SELECT id FROM urls WHERE original_url = $1`, url).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false
@@ -79,18 +79,18 @@ func (p *PostgresStorage) FindIDByURL(url string) (string, bool) {
 	return id, err == nil
 }
 
-func (p *PostgresStorage) Exists(id string) bool {
+func (p *PostgresStorage) Exists(ctx context.Context, id string) bool {
 	var exists bool
-	err := p.db.QueryRowContext(context.Background(),
+	err := p.db.QueryRowContext(ctx,
 		`SELECT EXISTS(SELECT 1 FROM urls WHERE id = $1)`, id).Scan(&exists)
 	return err == nil && exists
 }
 
-func (p *PostgresStorage) Load() error {
+func (p *PostgresStorage) Load(ctx context.Context) error {
 	return nil
 }
 
-func (p *PostgresStorage) SaveToFile() error {
+func (p *PostgresStorage) SaveToFile(ctx context.Context) error {
 	return nil
 }
 
@@ -98,8 +98,7 @@ func (p *PostgresStorage) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
-func (p *PostgresStorage) BatchSave(items []BatchItem) error {
-	ctx := context.Background()
+func (p *PostgresStorage) BatchSave(ctx context.Context, items []BatchItem) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err

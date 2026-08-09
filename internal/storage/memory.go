@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"sync"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
@@ -20,55 +21,54 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) Save(shortUrl string, url string) error {
+func (m *MemoryStorage) Save(ctx context.Context, id, url string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-
-	// Если id уже существует, удаляем старую связь из urlMap
-	if oldLink, ok := m.data[shortUrl]; ok {
-		delete(m.urlMap, oldLink.OriginalUrl)
-	}
-
 	link := models.StorageLink{
-		Uuid: "", // можно оставить пустым или сгенерировать при необходимости
+		Uuid: uuid.New().String(),
 		ShortenLink: models.ShortenLink{
-			ShortUrl:    shortUrl,
+			ShortUrl:    id,
 			OriginalUrl: url,
 		},
 	}
-	m.data[shortUrl] = link
-	m.urlMap[url] = shortUrl
-
+	m.data[id] = link
+	m.urlMap[url] = id
 	return nil
 }
 
-func (m *MemoryStorage) Get(id string) (string, error) {
+func (m *MemoryStorage) Get(ctx context.Context, id string) (string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if link, ok := m.data[id]; ok {
-		return link.OriginalUrl, nil
+	link, ok := m.data[id]
+	if !ok {
+		return "", ErrNotFound
 	}
-	return "", ErrNotFound
+	return link.OriginalUrl, nil
 }
 
-func (m *MemoryStorage) Exists(shortUrl string) bool {
+func (m *MemoryStorage) Exists(ctx context.Context, id string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, ok := m.data[shortUrl]
+	_, ok := m.data[id]
 	return ok
 }
 
-func (m *MemoryStorage) FindIDByURL(url string) (string, bool) {
+func (m *MemoryStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	id, ok := m.urlMap[url]
 	return id, ok
 }
 
-func (m *MemoryStorage) Load() error       { return nil }
-func (m *MemoryStorage) SaveToFile() error { return nil }
+func (m *MemoryStorage) Load(ctx context.Context) error {
+	return nil
+}
 
-func (m *MemoryStorage) BatchSave(items []BatchItem) error {
+func (m *MemoryStorage) SaveToFile(ctx context.Context) error {
+	return nil
+}
+
+func (m *MemoryStorage) BatchSave(ctx context.Context, items []BatchItem) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, item := range items {
