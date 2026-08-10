@@ -12,6 +12,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/user" // для получения userID из контекста
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
@@ -30,7 +31,14 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler
 	return &Handler{storage: storage, cfg: cfg, db: db}
 }
 
+// CreateShortURL – получение userID из контекста
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
+	userID := user.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
@@ -38,7 +46,7 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	link := string(body)
 
-	shortURL, err := handleShorten(r.Context(), link, h.storage)
+	shortLink, err := handleShorten(r.Context(), link, h.storage, userID)
 	if err != nil {
 		var dupErr *DuplicateURLError
 		if errors.As(err, &dupErr) {
@@ -58,8 +66,8 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(shortURL.GetStatusCode())
-	fullLink := shortURL.GetFullLink(h.cfg.BaseURL)
+	w.WriteHeader(shortLink.GetStatusCode())
+	fullLink := shortLink.GetFullLink(h.cfg.BaseURL)
 	_, _ = w.Write([]byte(fullLink))
 }
 
@@ -83,6 +91,12 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
+	userID := user.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req models.CreateUrlRequest
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
@@ -91,7 +105,7 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, err := handleShorten(r.Context(), req.Url, h.storage)
+	shortLink, err := handleShorten(r.Context(), req.Url, h.storage, userID)
 	if err != nil {
 		var dupErr *DuplicateURLError
 		if errors.As(err, &dupErr) {
@@ -115,10 +129,10 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := models.ShortUrlResponse{
-		Result: shortURL.GetFullLink(h.cfg.BaseURL),
+		Result: shortLink.GetFullLink(h.cfg.BaseURL),
 	}
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(shortURL.GetStatusCode())
+	w.WriteHeader(shortLink.GetStatusCode())
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
@@ -140,7 +154,12 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
-	// 1. Читаем тело
+	userID := user.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
@@ -148,7 +167,6 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	// 2. Декодируем JSON
 	var reqItems []models.BatchRequestItem
 	if err := json.Unmarshal(body, &reqItems); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -159,8 +177,7 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Подготовка данных (валидация, поиск существующих, генерация новых ID)
-	urlMap, newItems, err := prepareBatchItems(r.Context(), reqItems, h.storage)
+	urlMap, newItems, err := prepareBatchItems(r.Context(), reqItems, h.storage, userID)
 	if err != nil {
 		var appErr models.AppError
 		if errors.As(err, &appErr) {
@@ -171,20 +188,50 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 4. Сохраняем новые пары атомарно
 	if len(newItems) > 0 {
-		if err := h.storage.BatchSave(r.Context(), newItems); err != nil {
+		if err := h.storage.BatchSave(r.Context(), newItems, userID); err != nil {
 			logger.Log.Error("failed to save batch", zap.Error(err))
 			http.Error(w, "Failed to save batch", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// 5. Формируем и отправляем ответ
 	respItems := buildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(respItems); err != nil {
+		logger.Log.Error("failed to encode response", zap.Error(err))
+	}
+}
+
+func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID := user.GetUserIDFromContext(r.Context())
+	if userID == "" {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	pairs, err := h.storage.GetAllByUser(r.Context(), userID)
+	if err != nil {
+		logger.Log.Error("failed to get user URLs", zap.Error(err))
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	if len(pairs) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	resp := make([]models.URLPair, len(pairs))
+	for i, p := range pairs {
+		resp[i] = models.URLPair{
+			ShortURL:    h.cfg.BaseURL + "/" + p.ShortURL,
+			OriginalURL: p.OriginalURL,
+		}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
 }

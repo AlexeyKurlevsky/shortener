@@ -1,6 +1,8 @@
 package models
 
-import "net/http"
+import (
+	"net/http"
+)
 
 type CreateUrlRequest struct {
 	Url string `json:"url"`
@@ -22,12 +24,11 @@ type ShortUrlResponse struct {
 type ShortenLink struct {
 	ShortUrl    string `json:"short_url"`
 	OriginalUrl string `json:"original_url"`
-	IsNew       bool   `json:"-"` // не сохранять в json
+	IsNew       bool   `json:"-"`
 }
 
 func (s *ShortenLink) GetFullLink(baseURL string) string {
-	fullLink := baseURL + "/" + s.ShortUrl
-	return fullLink
+	return baseURL + "/" + s.ShortUrl
 }
 
 func (s *ShortenLink) GetStatusCode() int {
@@ -40,6 +41,7 @@ func (s *ShortenLink) GetStatusCode() int {
 type StorageLink struct {
 	Uuid string `json:"uuid"`
 	ShortenLink
+	UserID string `json:"user_id"`
 }
 
 type BatchRequestItem struct {
@@ -50,4 +52,18 @@ type BatchRequestItem struct {
 type BatchResponseItem struct {
 	CorrelationID string `json:"correlation_id"`
 	ShortURL      string `json:"short_url"`
+}
+
+type URLPair struct {
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
+}
+
+type DuplicateURLError struct {
+	ExistingID  string
+	OriginalURL string
+}
+
+func (e DuplicateURLError) Error() string {
+	return "duplicate URL"
 }

@@ -10,8 +10,8 @@ import (
 
 type MemoryStorage struct {
 	mu     sync.RWMutex
-	data   map[string]models.StorageLink // ключ: shortUrl
-	urlMap map[string]string             // ключ: originalUrl -> shortUrl
+	data   map[string]models.StorageLink // key: shortUrl
+	urlMap map[string]string             // key: originalUrl -> shortUrl
 }
 
 func NewMemoryStorage() *MemoryStorage {
@@ -21,7 +21,7 @@ func NewMemoryStorage() *MemoryStorage {
 	}
 }
 
-func (m *MemoryStorage) Save(ctx context.Context, id, url string) error {
+func (m *MemoryStorage) Save(ctx context.Context, id, url, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	link := models.StorageLink{
@@ -30,6 +30,7 @@ func (m *MemoryStorage) Save(ctx context.Context, id, url string) error {
 			ShortUrl:    id,
 			OriginalUrl: url,
 		},
+		UserID: userID,
 	}
 	m.data[id] = link
 	m.urlMap[url] = id
@@ -68,7 +69,7 @@ func (m *MemoryStorage) SaveToFile(ctx context.Context) error {
 	return nil
 }
 
-func (m *MemoryStorage) BatchSave(ctx context.Context, items []BatchItem) error {
+func (m *MemoryStorage) BatchSave(ctx context.Context, items []BatchItem, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, item := range items {
@@ -78,9 +79,25 @@ func (m *MemoryStorage) BatchSave(ctx context.Context, items []BatchItem) error 
 				ShortUrl:    item.ID,
 				OriginalUrl: item.URL,
 			},
+			UserID: userID,
 		}
 		m.data[item.ID] = link
 		m.urlMap[item.URL] = item.ID
 	}
 	return nil
+}
+
+func (m *MemoryStorage) GetAllByUser(ctx context.Context, userID string) ([]URLPair, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var pairs []URLPair
+	for _, link := range m.data {
+		if link.UserID == userID {
+			pairs = append(pairs, URLPair{
+				ShortURL:    link.ShortUrl,
+				OriginalURL: link.OriginalUrl,
+			})
+		}
+	}
+	return pairs, nil
 }

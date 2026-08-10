@@ -14,20 +14,27 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/user"
 )
+
+// ------------------------------------------------------------
+// Тестовые вспомогательные типы и функции
+// ------------------------------------------------------------
 
 type dummyPinger struct{}
 
 func (d dummyPinger) Ping(ctx context.Context) error { return nil }
 
+// mockStorage реализует storage.Storage.
 type mockStorage struct {
-	findIDByURLFunc func(ctx context.Context, url string) (string, bool)
-	existsFunc      func(ctx context.Context, id string) bool
-	saveFunc        func(ctx context.Context, id, url string) error
-	getFunc         func(ctx context.Context, id string) (string, error)
-	loadFunc        func(ctx context.Context) error
-	saveToFileFunc  func(ctx context.Context) error
-	batchSaveFunc   func(ctx context.Context, items []storage.BatchItem) error
+	findIDByURLFunc  func(ctx context.Context, url string) (string, bool)
+	existsFunc       func(ctx context.Context, id string) bool
+	saveFunc         func(ctx context.Context, id, url, userID string) error
+	getFunc          func(ctx context.Context, id string) (string, error)
+	loadFunc         func(ctx context.Context) error
+	saveToFileFunc   func(ctx context.Context) error
+	batchSaveFunc    func(ctx context.Context, items []storage.BatchItem, userID string) error
+	getAllByUserFunc func(ctx context.Context, userID string) ([]storage.URLPair, error)
 }
 
 func (m *mockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
@@ -44,9 +51,9 @@ func (m *mockStorage) Exists(ctx context.Context, id string) bool {
 	return false
 }
 
-func (m *mockStorage) Save(ctx context.Context, id, url string) error {
+func (m *mockStorage) Save(ctx context.Context, id, url, userID string) error {
 	if m.saveFunc != nil {
-		return m.saveFunc(ctx, id, url)
+		return m.saveFunc(ctx, id, url, userID)
 	}
 	return nil
 }
@@ -72,13 +79,21 @@ func (m *mockStorage) SaveToFile(ctx context.Context) error {
 	return nil
 }
 
-func (m *mockStorage) BatchSave(ctx context.Context, items []storage.BatchItem) error {
+func (m *mockStorage) BatchSave(ctx context.Context, items []storage.BatchItem, userID string) error {
 	if m.batchSaveFunc != nil {
-		return m.batchSaveFunc(ctx, items)
+		return m.batchSaveFunc(ctx, items, userID)
 	}
 	return nil
 }
 
+func (m *mockStorage) GetAllByUser(ctx context.Context, userID string) ([]storage.URLPair, error) {
+	if m.getAllByUserFunc != nil {
+		return m.getAllByUserFunc(ctx, userID)
+	}
+	return nil, nil
+}
+
+// setupTest создаёт Handler с заданным mock-хранилищем и фиктивным Pinger.
 func setupTest(mock *mockStorage) *Handler {
 	cfg := &config.Config{
 		ServerAddr: ":8080",
@@ -87,6 +102,7 @@ func setupTest(mock *mockStorage) *Handler {
 	return NewHandler(mock, cfg, dummyPinger{})
 }
 
+// mockPinger для тестирования PingHandler
 type mockPinger struct {
 	pingFunc func(ctx context.Context) error
 }
@@ -97,6 +113,18 @@ func (m mockPinger) Ping(ctx context.Context) error {
 	}
 	return nil
 }
+
+const testUserID = "test-user-id"
+
+// setUserContext добавляет userID в контекст запроса с помощью экспортируемой функции user.WithUserID.
+func setUserContext(r *http.Request, userID string) *http.Request {
+	ctx := user.WithUserID(r.Context(), userID)
+	return r.WithContext(ctx)
+}
+
+// ------------------------------------------------------------
+// Тесты
+// ------------------------------------------------------------
 
 func TestIsValidURL(t *testing.T) {
 	tests := []struct {
@@ -127,7 +155,7 @@ func TestCreateShortURL(t *testing.T) {
 		body           string
 		mockFind       func(ctx context.Context, url string) (string, bool)
 		mockExists     func(ctx context.Context, id string) bool
-		mockSave       func(ctx context.Context, id, url string) error
+		mockSave       func(ctx context.Context, id, url, userID string) error
 		wantStatus     int
 		wantBodyPrefix string
 	}{
@@ -136,7 +164,7 @@ func TestCreateShortURL(t *testing.T) {
 			body:           "https://example.com",
 			mockFind:       func(ctx context.Context, url string) (string, bool) { return "", false },
 			mockExists:     func(ctx context.Context, id string) bool { return false },
-			mockSave:       func(ctx context.Context, id, url string) error { return nil },
+			mockSave:       func(ctx context.Context, id, url, userID string) error { return nil },
 			wantStatus:     http.StatusCreated,
 			wantBodyPrefix: "http://localhost:8080/",
 		},
@@ -159,8 +187,9 @@ func TestCreateShortURL(t *testing.T) {
 			h := setupTest(mock)
 
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
-			w := httptest.NewRecorder()
+			req = setUserContext(req, testUserID)
 
+			w := httptest.NewRecorder()
 			h.CreateShortURL(w, req)
 
 			res := w.Result()
@@ -190,7 +219,7 @@ func TestCreateShortURLJson(t *testing.T) {
 		body           interface{}
 		mockFind       func(ctx context.Context, url string) (string, bool)
 		mockExists     func(ctx context.Context, id string) bool
-		mockSave       func(ctx context.Context, id, url string) error
+		mockSave       func(ctx context.Context, id, url, userID string) error
 		wantStatus     int
 		wantBodyResult string
 	}{
@@ -199,7 +228,7 @@ func TestCreateShortURLJson(t *testing.T) {
 			body:           models.CreateUrlRequest{Url: "https://example.com"},
 			mockFind:       func(ctx context.Context, url string) (string, bool) { return "", false },
 			mockExists:     func(ctx context.Context, id string) bool { return false },
-			mockSave:       func(ctx context.Context, id, url string) error { return nil },
+			mockSave:       func(ctx context.Context, id, url, userID string) error { return nil },
 			wantStatus:     http.StatusCreated,
 			wantBodyResult: "http://localhost:8080/",
 		},
@@ -225,7 +254,7 @@ func TestCreateShortURLJson(t *testing.T) {
 			body:       models.CreateUrlRequest{Url: "https://example.com"},
 			mockFind:   func(ctx context.Context, url string) (string, bool) { return "", false },
 			mockExists: func(ctx context.Context, id string) bool { return false },
-			mockSave:   func(ctx context.Context, id, url string) error { return errors.New("storage error") },
+			mockSave:   func(ctx context.Context, id, url, userID string) error { return errors.New("storage error") },
 			wantStatus: http.StatusInternalServerError,
 		},
 	}
@@ -255,8 +284,9 @@ func TestCreateShortURLJson(t *testing.T) {
 
 			req := httptest.NewRequest(http.MethodPost, "/api/shorten", bytes.NewReader(bodyBytes))
 			req.Header.Set("Content-Type", "application/json")
-			w := httptest.NewRecorder()
+			req = setUserContext(req, testUserID)
 
+			w := httptest.NewRecorder()
 			h.CreateShortURLJson(w, req)
 
 			res := w.Result()

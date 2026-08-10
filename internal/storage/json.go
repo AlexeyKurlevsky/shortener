@@ -11,15 +11,13 @@ import (
 	"github.com/google/uuid"
 )
 
-// JSONStorage хранит ссылки в файле JSON.
 type JSONStorage struct {
 	filePath string
 	mu       sync.RWMutex
-	data     map[string]models.StorageLink // ключ: ShortUrl
-	urlMap   map[string]string             // ключ: OriginalUrl -> ShortUrl
+	data     map[string]models.StorageLink
+	urlMap   map[string]string
 }
 
-// NewJSONStorage создаёт хранилище и загружает данные из файла (если он существует).
 func NewJSONStorage(filePath string) (*JSONStorage, error) {
 	s := &JSONStorage{
 		filePath: filePath,
@@ -32,34 +30,28 @@ func NewJSONStorage(filePath string) (*JSONStorage, error) {
 	return s, nil
 }
 
-// Save сохраняет ссылку по короткому идентификатору.
-func (j *JSONStorage) Save(ctx context.Context, id, url string) error {
+func (j *JSONStorage) Save(ctx context.Context, id, url, userID string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	// Удаляем старую связь, если id уже существует
 	if oldLink, ok := j.data[id]; ok {
 		delete(j.urlMap, oldLink.OriginalUrl)
 	}
-
-	linkUuid := uuid.New().String()
 	link := models.StorageLink{
-		Uuid: linkUuid,
+		Uuid: uuid.New().String(),
 		ShortenLink: models.ShortenLink{
 			ShortUrl:    id,
 			OriginalUrl: url,
 		},
+		UserID: userID,
 	}
 	j.data[id] = link
 	j.urlMap[url] = id
-
 	return j.saveToFile(ctx)
 }
 
-// Get возвращает оригинальный URL по короткому идентификатору.
 func (j *JSONStorage) Get(ctx context.Context, id string) (string, error) {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
-
 	link, ok := j.data[id]
 	if !ok {
 		return "", ErrNotFound
@@ -67,7 +59,6 @@ func (j *JSONStorage) Get(ctx context.Context, id string) (string, error) {
 	return link.OriginalUrl, nil
 }
 
-// Exists проверяет наличие записи по короткому идентификатору.
 func (j *JSONStorage) Exists(ctx context.Context, id string) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
@@ -75,7 +66,6 @@ func (j *JSONStorage) Exists(ctx context.Context, id string) bool {
 	return ok
 }
 
-// FindIDByURL ищет короткий идентификатор по оригинальному URL.
 func (j *JSONStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
@@ -83,17 +73,14 @@ func (j *JSONStorage) FindIDByURL(ctx context.Context, url string) (string, bool
 	return id, ok
 }
 
-// Load загружает данные из JSON-файла в память.
 func (j *JSONStorage) Load(ctx context.Context) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-
 	file, err := os.Open(j.filePath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-
 	var links []models.StorageLink
 	dec := json.NewDecoder(file)
 	err = dec.Decode(&links)
@@ -106,7 +93,6 @@ func (j *JSONStorage) Load(ctx context.Context) error {
 		}
 		return nil
 	}
-	// Если файл пустой или содержит только EOF, считаем, что данных нет
 	if err == io.EOF {
 		return nil
 	}
@@ -118,13 +104,11 @@ func (j *JSONStorage) saveToFile(ctx context.Context) error {
 	for _, link := range j.data {
 		links = append(links, link)
 	}
-
 	file, err := os.Create(j.filePath)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-
 	enc := json.NewEncoder(file)
 	enc.SetIndent("", "  ")
 	return enc.Encode(links)
@@ -136,7 +120,7 @@ func (j *JSONStorage) SaveToFile(ctx context.Context) error {
 	return j.saveToFile(ctx)
 }
 
-func (j *JSONStorage) BatchSave(ctx context.Context, items []BatchItem) error {
+func (j *JSONStorage) BatchSave(ctx context.Context, items []BatchItem, userID string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	for _, item := range items {
@@ -146,9 +130,25 @@ func (j *JSONStorage) BatchSave(ctx context.Context, items []BatchItem) error {
 				ShortUrl:    item.ID,
 				OriginalUrl: item.URL,
 			},
+			UserID: userID,
 		}
 		j.data[item.ID] = link
 		j.urlMap[item.URL] = item.ID
 	}
 	return j.saveToFile(ctx)
+}
+
+func (j *JSONStorage) GetAllByUser(ctx context.Context, userID string) ([]URLPair, error) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	var pairs []URLPair
+	for _, link := range j.data {
+		if link.UserID == userID {
+			pairs = append(pairs, URLPair{
+				ShortURL:    link.ShortUrl,
+				OriginalURL: link.OriginalUrl,
+			})
+		}
+	}
+	return pairs, nil
 }

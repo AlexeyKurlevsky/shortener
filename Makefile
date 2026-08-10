@@ -9,3 +9,6 @@ test_course: build
 
 test:
 	go test -v ./...
+
+migrate:
+	migrate create -ext sql -dir ./internal/storage/migrations -seq create_users_table

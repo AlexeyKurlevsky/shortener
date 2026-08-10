@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,11 +21,22 @@ type dummyPinger struct{}
 func (d dummyPinger) Ping(ctx context.Context) error { return nil }
 
 func TestRouter(t *testing.T) {
-	st := storage.NewMemoryStorage()
-	cfg := &config.Config{BaseURL: "http://localhost:8080"}
-	h := handlers.NewHandler(st, cfg, dummyPinger{})
-	router := NewRouter(h)
+	secret := make([]byte, 32)
+	_, err := rand.Read(secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		BaseURL:       "http://localhost:8080",
+		SecretKeyByte: secret,
+	}
 
+	st := storage.NewMemoryStorage()
+	h := handlers.NewHandler(st, cfg, dummyPinger{})
+	userSvc := user.NewUserService(cfg)
+	router := NewRouter(h, userSvc)
+
+	// Тест создания короткой ссылки
 	req := httptest.NewRequest("POST", "/", strings.NewReader("https://example.com"))
 	w := httptest.NewRecorder()
 	router.ServeHTTP(w, req)
@@ -37,6 +50,7 @@ func TestRouter(t *testing.T) {
 	parts := strings.Split(shortURL, "/")
 	id := parts[len(parts)-1]
 
+	// Тест получения оригинального URL по ID
 	req2 := httptest.NewRequest("GET", "/"+id, nil)
 	w2 := httptest.NewRecorder()
 	router.ServeHTTP(w2, req2)

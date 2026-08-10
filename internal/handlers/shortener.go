@@ -43,7 +43,7 @@ func normalizeURL(raw string) string {
 }
 
 // handleShorten содержит основную логику сокращения одного URL
-func handleShorten(ctx context.Context, url string, store storage.Storage) (models.ShortenLink, error) {
+func handleShorten(ctx context.Context, url string, store storage.Storage, userID string) (models.ShortenLink, error) {
 	var result models.ShortenLink
 
 	if !IsValidURL(url) {
@@ -67,7 +67,7 @@ func handleShorten(ctx context.Context, url string, store storage.Storage) (mode
 			break
 		}
 	}
-	if err := store.Save(ctx, shortURL, url); err != nil {
+	if err := store.Save(ctx, shortURL, url, userID); err != nil {
 		return result, newStorageSaveError()
 	}
 
@@ -77,7 +77,7 @@ func handleShorten(ctx context.Context, url string, store storage.Storage) (mode
 	return result, nil
 }
 
-func prepareBatchItems(ctx context.Context, items []models.BatchRequestItem, store storage.Storage) (map[string]string, []storage.BatchItem, error) {
+func prepareBatchItems(ctx context.Context, items []models.BatchRequestItem, store storage.Storage, userID string) (map[string]string, []storage.BatchItem, error) {
 	urlMap := make(map[string]string)
 	newItems := make([]storage.BatchItem, 0)
 
