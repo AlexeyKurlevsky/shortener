@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"os"
 	"testing"
 
@@ -26,29 +27,29 @@ func TestJSONStorage(t *testing.T) {
 	// Дополнительно проверяем корректность urlMap при перезаписи
 	t.Run("overwrite and urlMap", func(t *testing.T) {
 		// сохраняем abc -> example.com
-		err := s.Save("abc", "https://example.com")
+		err := s.Save(context.Background(), "abc", "https://example.com")
 		require.NoError(t, err)
 
 		// проверяем, что FindIDByURL находит
-		id, ok := s.FindIDByURL("https://example.com")
+		id, ok := s.FindIDByURL(context.Background(), "https://example.com")
 		assert.True(t, ok)
 		assert.Equal(t, "abc", id)
 
 		// перезаписываем abc -> new.com
-		err = s.Save("abc", "https://new.com")
+		err = s.Save(context.Background(), "abc", "https://new.com")
 		require.NoError(t, err)
 
 		// старый URL больше не должен находиться
-		_, ok = s.FindIDByURL("https://example.com")
+		_, ok = s.FindIDByURL(context.Background(), "https://example.com")
 		assert.False(t, ok, "старый URL не должен быть найден после перезаписи")
 
 		// новый URL должен находиться
-		id, ok = s.FindIDByURL("https://new.com")
+		id, ok = s.FindIDByURL(context.Background(), "https://new.com")
 		assert.True(t, ok)
 		assert.Equal(t, "abc", id)
 
 		// проверяем, что Get возвращает новый URL
-		val, err := s.Get("abc")
+		val, err := s.Get(context.Background(), "abc")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://new.com", val)
 	})
@@ -56,35 +57,35 @@ func TestJSONStorage(t *testing.T) {
 
 // Общий тест для всех хранилищ
 func testStorage(t *testing.T, s Storage) {
-	err := s.Save("abc", "https://example.com")
+	err := s.Save(context.Background(), "abc", "https://example.com")
 	assert.NoError(t, err)
 
-	val, err := s.Get("abc")
+	val, err := s.Get(context.Background(), "abc")
 	assert.NoError(t, err)
 	assert.Equal(t, "https://example.com", val)
 
-	assert.True(t, s.Exists("abc"))
-	assert.False(t, s.Exists("nonexistent"))
+	assert.True(t, s.Exists(context.Background(), "abc"))
+	assert.False(t, s.Exists(context.Background(), "nonexistent"))
 
-	_, err = s.Get("nonexistent")
+	_, err = s.Get(context.Background(), "nonexistent")
 	assert.Equal(t, ErrNotFound, err)
 
-	err = s.Save("abc", "https://new.com")
+	err = s.Save(context.Background(), "abc", "https://new.com")
 	assert.NoError(t, err)
-	val, err = s.Get("abc")
+	val, err = s.Get(context.Background(), "abc")
 	assert.NoError(t, err)
 	assert.Equal(t, "https://new.com", val)
 
 	if js, ok := s.(*JSONStorage); ok {
-		err = js.Save("def", "https://def.com")
+		err = js.Save(context.Background(), "def", "https://def.com")
 		assert.NoError(t, err)
 
 		s2, err := NewJSONStorage(js.filePath)
 		assert.NoError(t, err)
-		val2, err := s2.Get("def")
+		val2, err := s2.Get(context.Background(), "def")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://def.com", val2)
-		val2, err = s2.Get("abc")
+		val2, err = s2.Get(context.Background(), "abc")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://new.com", val2)
 	}
@@ -94,27 +95,27 @@ func testStorage(t *testing.T, s Storage) {
 			{ID: "batch1", URL: "https://batch1.com"},
 			{ID: "batch2", URL: "https://batch2.com"},
 		}
-		err := s.BatchSave(items)
+		err := s.BatchSave(context.Background(), items)
 		assert.NoError(t, err)
 
-		val, err := s.Get("batch1")
+		val, err := s.Get(context.Background(), "batch1")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://batch1.com", val)
 
-		val, err = s.Get("batch2")
+		val, err = s.Get(context.Background(), "batch2")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://batch2.com", val)
 
-		id, ok := s.FindIDByURL("https://batch1.com")
+		id, ok := s.FindIDByURL(context.Background(), "https://batch1.com")
 		assert.True(t, ok)
 		assert.Equal(t, "batch1", id)
 	})
 
-	err = s.Save("abc", "https://example.com")
+	err = s.Save(context.Background(), "abc", "https://example.com")
 	assert.NoError(t, err)
-	id, ok := s.FindIDByURL("https://example.com")
+	id, ok := s.FindIDByURL(context.Background(), "https://example.com")
 	assert.True(t, ok)
 	assert.Equal(t, "abc", id)
-	_, ok = s.FindIDByURL("https://nonexistent.com")
+	_, ok = s.FindIDByURL(context.Background(), "https://nonexistent.com")
 	assert.False(t, ok)
 }

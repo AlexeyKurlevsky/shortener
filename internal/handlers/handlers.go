@@ -5,9 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
@@ -32,76 +30,7 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler
 	return &Handler{storage: storage, cfg: cfg, db: db}
 }
 
-func generateID() string {
-	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-	const length = 8
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[rand.Intn(len(charset))]
-	}
-	return string(b)
-}
-
-func IsValidURL(str string) bool {
-	u, err := url.ParseRequestURI(str)
-	if err != nil {
-		return false
-	}
-	if u.Scheme == "" || u.Host == "" {
-		return false
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return false
-	}
-	return true
-}
-
-func normalizeURL(raw string) string {
-	// 1. Удаляем пробелы вокруг (аналог strip)
-	trimmed := strings.TrimSpace(raw)
-
-	// 2. Убираем завершающий слэш, если он есть (кроме корневого "/")
-	return strings.TrimSuffix(trimmed, "/")
-}
-
-func handleShorten(url string, storage storage.Storage) (models.ShortenLink, error) {
-	var result models.ShortenLink
-
-	// Проверяем валидность url
-	if !IsValidURL(url) {
-		return result, newInvalidURLError()
-	}
-	url = normalizeURL(url)
-
-	// Ищем url в уже созданных ссылках
-	if shortURL, ok := storage.FindIDByURL(url); ok {
-		result.ShortUrl = shortURL
-		result.OriginalUrl = url
-		result.IsNew = false
-		return result, nil
-	}
-
-	// Если не нашли, то генерируем новую
-	var shortURL string
-	for {
-		shortURL = generateID()
-		if !storage.Exists(shortURL) {
-			break
-		}
-	}
-	if err := storage.Save(shortURL, url); err != nil {
-		return result, newStorageSaveError()
-	}
-
-	result.OriginalUrl = url
-	result.ShortUrl = shortURL
-	result.IsNew = true
-
-	return result, nil
-}
-
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	var shortURL models.ShortenLink
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
@@ -109,8 +38,16 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	link := string(body)
 
-	shortURL, err = handleShorten(link, h.storage)
+	shortURL, err := handleShorten(r.Context(), link, h.storage)
 	if err != nil {
+		var dupErr *DuplicateURLError
+		if errors.As(err, &dupErr) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusConflict)
+			fullLink := h.cfg.BaseURL + "/" + dupErr.ExistingID
+			_, _ = w.Write([]byte(fullLink))
+			return
+		}
 		var appErr models.AppError
 		if errors.As(err, &appErr) {
 			http.Error(w, appErr.Error(), appErr.Status)
@@ -132,7 +69,7 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid id", http.StatusBadRequest)
 		return
 	}
-	original, err := h.storage.Get(id)
+	original, err := h.storage.Get(r.Context(), id)
 	if err != nil {
 		if err == storage.ErrNotFound {
 			http.Error(w, "URL not found", http.StatusNotFound)
@@ -147,18 +84,27 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	var req models.CreateUrlRequest
-	var shortURL models.ShortenLink
-
 	dec := json.NewDecoder(r.Body)
-
 	if err := dec.Decode(&req); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	shortURL, err := handleShorten(req.Url, h.storage)
+	shortURL, err := handleShorten(r.Context(), req.Url, h.storage)
 	if err != nil {
+		var dupErr *DuplicateURLError
+		if errors.As(err, &dupErr) {
+			resp := models.ShortUrlResponse{
+				Result: h.cfg.BaseURL + "/" + dupErr.ExistingID,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusConflict)
+			if err := json.NewEncoder(w).Encode(resp); err != nil {
+				logger.Log.Error("failed to encode response", zap.Error(err))
+			}
+			return
+		}
 		var appErr models.AppError
 		if errors.As(err, &appErr) {
 			http.Error(w, appErr.Error(), appErr.Status)
@@ -171,10 +117,8 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	resp := models.ShortUrlResponse{
 		Result: shortURL.GetFullLink(h.cfg.BaseURL),
 	}
-
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(shortURL.GetStatusCode())
-
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
@@ -215,58 +159,29 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 3. Валидация и нормализация
-	urlMap := make(map[string]string)
-	newItems := make([]storage.BatchItem, 0)
-
-	for _, item := range reqItems {
-		if !IsValidURL(item.OriginalURL) {
-			http.Error(w, "Invalid URL: "+item.OriginalURL, http.StatusBadRequest)
-			return
-		}
-		norm := normalizeURL(item.OriginalURL)
-		if _, ok := urlMap[norm]; ok {
-			continue // дубликат в батче
-		}
-		// Проверяем в хранилище
-		if id, ok := h.storage.FindIDByURL(norm); ok {
-			urlMap[norm] = id
+	// 3. Подготовка данных (валидация, поиск существующих, генерация новых ID)
+	urlMap, newItems, err := prepareBatchItems(r.Context(), reqItems, h.storage)
+	if err != nil {
+		var appErr models.AppError
+		if errors.As(err, &appErr) {
+			http.Error(w, appErr.Error(), appErr.Status)
 		} else {
-			// Генерируем новый ID
-			var newID string
-			for {
-				newID = generateID()
-				if !h.storage.Exists(newID) {
-					break
-				}
-			}
-			urlMap[norm] = newID
-			newItems = append(newItems, storage.BatchItem{ID: newID, URL: norm})
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
+		return
 	}
 
 	// 4. Сохраняем новые пары атомарно
 	if len(newItems) > 0 {
-		if err := h.storage.BatchSave(newItems); err != nil {
+		if err := h.storage.BatchSave(r.Context(), newItems); err != nil {
 			logger.Log.Error("failed to save batch", zap.Error(err))
 			http.Error(w, "Failed to save batch", http.StatusInternalServerError)
 			return
 		}
 	}
 
-	// 5. Формируем ответ
-	respItems := make([]models.BatchResponseItem, len(reqItems))
-	for i, item := range reqItems {
-		norm := normalizeURL(item.OriginalURL)
-		id := urlMap[norm]
-		fullURL := h.cfg.BaseURL + "/" + id
-		respItems[i] = models.BatchResponseItem{
-			CorrelationID: item.CorrelationID,
-			ShortURL:      fullURL,
-		}
-	}
-
-	// 6. Отправляем ответ
+	// 5. Формируем и отправляем ответ
+	respItems := buildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	if err := json.NewEncoder(w).Encode(respItems); err != nil {

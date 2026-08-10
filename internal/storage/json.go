@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"os"
@@ -25,17 +26,16 @@ func NewJSONStorage(filePath string) (*JSONStorage, error) {
 		data:     make(map[string]models.StorageLink),
 		urlMap:   make(map[string]string),
 	}
-	if err := s.Load(); err != nil && !os.IsNotExist(err) {
+	if err := s.Load(context.Background()); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	return s, nil
 }
 
 // Save сохраняет ссылку по короткому идентификатору.
-func (j *JSONStorage) Save(id string, url string) error {
+func (j *JSONStorage) Save(ctx context.Context, id, url string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-
 	// Удаляем старую связь, если id уже существует
 	if oldLink, ok := j.data[id]; ok {
 		delete(j.urlMap, oldLink.OriginalUrl)
@@ -52,11 +52,11 @@ func (j *JSONStorage) Save(id string, url string) error {
 	j.data[id] = link
 	j.urlMap[url] = id
 
-	return j.saveToFile()
+	return j.saveToFile(ctx)
 }
 
 // Get возвращает оригинальный URL по короткому идентификатору.
-func (j *JSONStorage) Get(id string) (string, error) {
+func (j *JSONStorage) Get(ctx context.Context, id string) (string, error) {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 
@@ -68,7 +68,7 @@ func (j *JSONStorage) Get(id string) (string, error) {
 }
 
 // Exists проверяет наличие записи по короткому идентификатору.
-func (j *JSONStorage) Exists(id string) bool {
+func (j *JSONStorage) Exists(ctx context.Context, id string) bool {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	_, ok := j.data[id]
@@ -76,7 +76,7 @@ func (j *JSONStorage) Exists(id string) bool {
 }
 
 // FindIDByURL ищет короткий идентификатор по оригинальному URL.
-func (j *JSONStorage) FindIDByURL(url string) (string, bool) {
+func (j *JSONStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
 	j.mu.RLock()
 	defer j.mu.RUnlock()
 	id, ok := j.urlMap[url]
@@ -84,7 +84,7 @@ func (j *JSONStorage) FindIDByURL(url string) (string, bool) {
 }
 
 // Load загружает данные из JSON-файла в память.
-func (j *JSONStorage) Load() error {
+func (j *JSONStorage) Load(ctx context.Context) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
@@ -113,7 +113,7 @@ func (j *JSONStorage) Load() error {
 	return err
 }
 
-func (j *JSONStorage) saveToFile() error {
+func (j *JSONStorage) saveToFile(ctx context.Context) error {
 	links := make([]models.StorageLink, 0, len(j.data))
 	for _, link := range j.data {
 		links = append(links, link)
@@ -130,13 +130,13 @@ func (j *JSONStorage) saveToFile() error {
 	return enc.Encode(links)
 }
 
-func (j *JSONStorage) SaveToFile() error {
+func (j *JSONStorage) SaveToFile(ctx context.Context) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
-	return j.saveToFile()
+	return j.saveToFile(ctx)
 }
 
-func (j *JSONStorage) BatchSave(items []BatchItem) error {
+func (j *JSONStorage) BatchSave(ctx context.Context, items []BatchItem) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	for _, item := range items {
@@ -150,5 +150,5 @@ func (j *JSONStorage) BatchSave(items []BatchItem) error {
 		j.data[item.ID] = link
 		j.urlMap[item.URL] = item.ID
 	}
-	return j.saveToFile()
+	return j.saveToFile(ctx)
 }

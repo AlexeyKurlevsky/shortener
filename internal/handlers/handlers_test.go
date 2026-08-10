@@ -21,60 +21,60 @@ type dummyPinger struct{}
 func (d dummyPinger) Ping(ctx context.Context) error { return nil }
 
 type mockStorage struct {
-	findIDByURLFunc func(url string) (string, bool)
-	existsFunc      func(id string) bool
-	saveFunc        func(id, url string) error
-	getFunc         func(id string) (string, error)
-	loadFunc        func() error
-	saveToFileFunc  func() error
-	batchSaveFunc   func(items []storage.BatchItem) error // новый метод
+	findIDByURLFunc func(ctx context.Context, url string) (string, bool)
+	existsFunc      func(ctx context.Context, id string) bool
+	saveFunc        func(ctx context.Context, id, url string) error
+	getFunc         func(ctx context.Context, id string) (string, error)
+	loadFunc        func(ctx context.Context) error
+	saveToFileFunc  func(ctx context.Context) error
+	batchSaveFunc   func(ctx context.Context, items []storage.BatchItem) error
 }
 
-func (m *mockStorage) FindIDByURL(url string) (string, bool) {
+func (m *mockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
 	if m.findIDByURLFunc != nil {
-		return m.findIDByURLFunc(url)
+		return m.findIDByURLFunc(ctx, url)
 	}
 	return "", false
 }
 
-func (m *mockStorage) Exists(id string) bool {
+func (m *mockStorage) Exists(ctx context.Context, id string) bool {
 	if m.existsFunc != nil {
-		return m.existsFunc(id)
+		return m.existsFunc(ctx, id)
 	}
 	return false
 }
 
-func (m *mockStorage) Save(id, url string) error {
+func (m *mockStorage) Save(ctx context.Context, id, url string) error {
 	if m.saveFunc != nil {
-		return m.saveFunc(id, url)
+		return m.saveFunc(ctx, id, url)
 	}
 	return nil
 }
 
-func (m *mockStorage) Get(id string) (string, error) {
+func (m *mockStorage) Get(ctx context.Context, id string) (string, error) {
 	if m.getFunc != nil {
-		return m.getFunc(id)
+		return m.getFunc(ctx, id)
 	}
 	return "", storage.ErrNotFound
 }
 
-func (m *mockStorage) Load() error {
+func (m *mockStorage) Load(ctx context.Context) error {
 	if m.loadFunc != nil {
-		return m.loadFunc()
+		return m.loadFunc(ctx)
 	}
 	return nil
 }
 
-func (m *mockStorage) SaveToFile() error {
+func (m *mockStorage) SaveToFile(ctx context.Context) error {
 	if m.saveToFileFunc != nil {
-		return m.saveToFileFunc()
+		return m.saveToFileFunc(ctx)
 	}
 	return nil
 }
 
-func (m *mockStorage) BatchSave(items []storage.BatchItem) error {
+func (m *mockStorage) BatchSave(ctx context.Context, items []storage.BatchItem) error {
 	if m.batchSaveFunc != nil {
-		return m.batchSaveFunc(items)
+		return m.batchSaveFunc(ctx, items)
 	}
 	return nil
 }
@@ -125,20 +125,27 @@ func TestCreateShortURL(t *testing.T) {
 	tests := []struct {
 		name           string
 		body           string
-		mockFind       func(string) (string, bool)
-		mockExists     func(string) bool
-		mockSave       func(string, string) error
+		mockFind       func(ctx context.Context, url string) (string, bool)
+		mockExists     func(ctx context.Context, id string) bool
+		mockSave       func(ctx context.Context, id, url string) error
 		wantStatus     int
 		wantBodyPrefix string
 	}{
 		{
 			name:           "success new URL",
 			body:           "https://example.com",
-			mockFind:       func(string) (string, bool) { return "", false },
-			mockExists:     func(string) bool { return false },
-			mockSave:       func(string, string) error { return nil },
+			mockFind:       func(ctx context.Context, url string) (string, bool) { return "", false },
+			mockExists:     func(ctx context.Context, id string) bool { return false },
+			mockSave:       func(ctx context.Context, id, url string) error { return nil },
 			wantStatus:     http.StatusCreated,
 			wantBodyPrefix: "http://localhost:8080/",
+		},
+		{
+			name:           "existing URL – returns 409 Conflict",
+			body:           "https://example.com",
+			mockFind:       func(ctx context.Context, url string) (string, bool) { return "abc123", true },
+			wantStatus:     http.StatusConflict,
+			wantBodyPrefix: "http://localhost:8080/abc123",
 		},
 	}
 
@@ -181,20 +188,27 @@ func TestCreateShortURLJson(t *testing.T) {
 	tests := []struct {
 		name           string
 		body           interface{}
-		mockFind       func(string) (string, bool)
-		mockExists     func(string) bool
-		mockSave       func(string, string) error
+		mockFind       func(ctx context.Context, url string) (string, bool)
+		mockExists     func(ctx context.Context, id string) bool
+		mockSave       func(ctx context.Context, id, url string) error
 		wantStatus     int
 		wantBodyResult string
 	}{
 		{
 			name:           "success new URL",
 			body:           models.CreateUrlRequest{Url: "https://example.com"},
-			mockFind:       func(string) (string, bool) { return "", false },
-			mockExists:     func(string) bool { return false },
-			mockSave:       func(string, string) error { return nil },
+			mockFind:       func(ctx context.Context, url string) (string, bool) { return "", false },
+			mockExists:     func(ctx context.Context, id string) bool { return false },
+			mockSave:       func(ctx context.Context, id, url string) error { return nil },
 			wantStatus:     http.StatusCreated,
 			wantBodyResult: "http://localhost:8080/",
+		},
+		{
+			name:           "existing URL – returns 409 Conflict",
+			body:           models.CreateUrlRequest{Url: "https://example.com"},
+			mockFind:       func(ctx context.Context, url string) (string, bool) { return "abc123", true },
+			wantStatus:     http.StatusConflict,
+			wantBodyResult: "http://localhost:8080/abc123",
 		},
 		{
 			name:       "invalid URL",
@@ -209,9 +223,9 @@ func TestCreateShortURLJson(t *testing.T) {
 		{
 			name:       "save fails",
 			body:       models.CreateUrlRequest{Url: "https://example.com"},
-			mockFind:   func(string) (string, bool) { return "", false },
-			mockExists: func(string) bool { return false },
-			mockSave:   func(string, string) error { return errors.New("storage error") },
+			mockFind:   func(ctx context.Context, url string) (string, bool) { return "", false },
+			mockExists: func(ctx context.Context, id string) bool { return false },
+			mockSave:   func(ctx context.Context, id, url string) error { return errors.New("storage error") },
 			wantStatus: http.StatusInternalServerError,
 		},
 	}
@@ -265,6 +279,55 @@ func TestCreateShortURLJson(t *testing.T) {
 					if resp.Result != tt.wantBodyResult {
 						t.Errorf("result = %q, want %q", resp.Result, tt.wantBodyResult)
 					}
+				}
+			}
+		})
+	}
+}
+
+func TestPingHandler(t *testing.T) {
+	tests := []struct {
+		name       string
+		pingError  error
+		wantStatus int
+	}{
+		{
+			name:       "successful ping",
+			pingError:  nil,
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "failed ping",
+			pingError:  errors.New("connection refused"),
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := mockPinger{
+				pingFunc: func(ctx context.Context) error {
+					return tt.pingError
+				},
+			}
+			cfg := &config.Config{ServerAddr: ":8080", BaseURL: "http://localhost:8080"}
+			h := NewHandler(nil, cfg, mock)
+
+			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+			w := httptest.NewRecorder()
+			h.PingHandler(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusOK {
+				body, _ := io.ReadAll(res.Body)
+				if string(body) != "OK" {
+					t.Errorf("body = %q, want %q", body, "OK")
 				}
 			}
 		})
