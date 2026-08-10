@@ -135,3 +135,20 @@ func (j *JSONStorage) SaveToFile() error {
 	defer j.mu.Unlock()
 	return j.saveToFile()
 }
+
+func (j *JSONStorage) BatchSave(items []BatchItem) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, item := range items {
+		link := models.StorageLink{
+			Uuid: uuid.New().String(),
+			ShortenLink: models.ShortenLink{
+				ShortUrl:    item.ID,
+				OriginalUrl: item.URL,
+			},
+		}
+		j.data[item.ID] = link
+		j.urlMap[item.URL] = item.ID
+	}
+	return j.saveToFile()
+}

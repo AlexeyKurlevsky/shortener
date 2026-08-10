@@ -11,4 +11,10 @@ type Storage interface {
 	FindIDByURL(url string) (string, bool)
 	Load() error
 	SaveToFile() error
+	BatchSave(items []BatchItem) error
+}
+
+type BatchItem struct {
+	ID  string
+	URL string
 }
