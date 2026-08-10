@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,10 +14,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+type dummyPinger struct{}
+
+func (d dummyPinger) Ping(ctx context.Context) error { return nil }
+
 func TestRouter(t *testing.T) {
 	st := storage.NewMemoryStorage()
 	cfg := &config.Config{BaseURL: "http://localhost:8080"}
-	h := handlers.NewHandler(st, cfg)
+	h := handlers.NewHandler(st, cfg, dummyPinger{})
 	router := NewRouter(h)
 
 	req := httptest.NewRequest("POST", "/", strings.NewReader("https://example.com"))
