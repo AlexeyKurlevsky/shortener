@@ -1,5 +1,5 @@
 -- Добавляем колонку user_id (пока nullable)
-ALTER TABLE urls ADD COLUMN user_id TEXT;
+ALTER TABLE urls ADD COLUMN IF NOT EXISTS user_id TEXT;
 
 -- Создаём таблицу users
 CREATE TABLE IF NOT EXISTS users (
@@ -14,11 +14,5 @@ FROM urls
 WHERE user_id IS NOT NULL
 ON CONFLICT (id) DO NOTHING;
 
--- Добавляем внешний ключ (разрешаем NULL для старых записей)
-ALTER TABLE urls
-ADD CONSTRAINT fk_urls_user_id
-FOREIGN KEY (user_id) REFERENCES users(id)
-ON DELETE RESTRICT;
-
--- Индекс для быстрых запросов по пользователю
+-- Индекс для быстрых запросов по пользователю (оставляем)
 CREATE INDEX IF NOT EXISTS idx_urls_user_id ON urls(user_id);
