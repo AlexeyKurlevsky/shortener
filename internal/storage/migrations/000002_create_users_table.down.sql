@@ -1,7 +1,10 @@
--- Удаляем таблицу users вместе с зависимостями (внешним ключом)
-DROP TABLE IF EXISTS users CASCADE;
+-- Явно удаляем внешний ключ перед удалением таблицы users
+ALTER TABLE urls DROP CONSTRAINT IF EXISTS fk_urls_user_id;
 
--- Удаляем колонку user_id из таблицы urls
+-- Теперь можно безопасно удалить таблицу users
+DROP TABLE IF EXISTS users;
+
+-- Удаляем колонку user_id
 ALTER TABLE urls DROP COLUMN IF EXISTS user_id;
 
 -- Удаляем индекс (если он остался)
