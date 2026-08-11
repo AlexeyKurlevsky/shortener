@@ -8,6 +8,10 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 )
 
+type contextKey string
+
+const UserIDContextKey contextKey = "userID"
+
 type UserService interface {
 	GetUserIDFromRequest(r *http.Request) (string, error)
 	SetUserCookie(w http.ResponseWriter, userID string)
@@ -39,10 +43,6 @@ func (s *userService) EnsureUser(w http.ResponseWriter, r *http.Request) context
 	}
 	return context.WithValue(r.Context(), UserIDContextKey, userID)
 }
-
-type contextKey string
-
-const UserIDContextKey contextKey = "userID"
 
 func GetUserIDFromContext(ctx context.Context) string {
 	if id, ok := ctx.Value(UserIDContextKey).(string); ok {
