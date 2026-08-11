@@ -41,7 +41,8 @@ func (s *ShortenLink) GetStatusCode() int {
 type StorageLink struct {
 	Uuid string `json:"uuid"`
 	ShortenLink
-	UserID string `json:"user_id"`
+	UserID    string `json:"user_id"`
+	IsDeleted bool   `json:"is_deleted"`
 }
 
 type BatchRequestItem struct {

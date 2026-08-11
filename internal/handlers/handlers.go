@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
@@ -74,8 +75,10 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 	}
 	original, err := h.storage.Get(r.Context(), id)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			http.Error(w, "URL not found", http.StatusNotFound)
+		} else if errors.Is(err, storage.ErrGone) {
+			http.Error(w, "URL is gone", http.StatusGone) // 410
 		} else {
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 		}
@@ -215,4 +218,35 @@ func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
+}
+
+func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(user.UserIDContextKey).(string)
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var ids []string
+	if err := json.Unmarshal(body, &ids); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(ids) == 0 {
+		http.Error(w, "Empty list", http.StatusBadRequest)
+		return
+	}
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := h.storage.DeleteURLs(ctx, ids, userID); err != nil {
+			logger.Log.Error("failed to delete URLs", zap.Error(err), zap.Strings("ids", ids))
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
 }

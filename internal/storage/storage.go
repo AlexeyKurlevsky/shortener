@@ -5,7 +5,10 @@ import (
 	"errors"
 )
 
-var ErrNotFound = errors.New("url not found")
+var (
+	ErrNotFound = errors.New("url not found")
+	ErrGone     = errors.New("url is deleted")
+)
 
 type URLPair struct {
 	ShortURL    string
@@ -21,6 +24,7 @@ type Storage interface {
 	SaveToFile(ctx context.Context) error
 	BatchSave(ctx context.Context, items []BatchItem, userID string) error
 	GetAllByUser(ctx context.Context, userID string) ([]URLPair, error)
+	DeleteURLs(ctx context.Context, ids []string, userID string) error
 }
 
 type BatchItem struct {

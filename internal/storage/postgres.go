@@ -11,6 +11,7 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/pgx"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lib/pq"
 )
 
 //go:embed migrations
@@ -82,18 +83,26 @@ func (p *PostgresStorage) Save(ctx context.Context, id, url, userID string) erro
 
 func (p *PostgresStorage) Get(ctx context.Context, id string) (string, error) {
 	var original string
+	var deleted bool
 	err := p.db.QueryRowContext(ctx,
-		`SELECT original_url FROM urls WHERE id = $1`, id).Scan(&original)
+		`SELECT original_url, is_deleted FROM urls WHERE id = $1`, id).
+		Scan(&original, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
-	return original, err
+	if err != nil {
+		return "", err
+	}
+	if deleted {
+		return "", ErrGone
+	}
+	return original, nil
 }
 
 func (p *PostgresStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
 	var id string
 	err := p.db.QueryRowContext(ctx,
-		`SELECT id FROM urls WHERE original_url = $1`, url).Scan(&id)
+		`SELECT id FROM urls WHERE original_url = $1 AND is_deleted = false`, url).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false
 	}
@@ -144,7 +153,7 @@ func (p *PostgresStorage) BatchSave(ctx context.Context, items []BatchItem, user
 
 func (p *PostgresStorage) GetAllByUser(ctx context.Context, userID string) ([]URLPair, error) {
 	rows, err := p.db.QueryContext(ctx,
-		`SELECT id, original_url FROM urls WHERE user_id = $1`, userID)
+		`SELECT id, original_url FROM urls WHERE user_id = $1 AND is_deleted = false`, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -164,4 +173,14 @@ func (p *PostgresStorage) GetAllByUser(ctx context.Context, userID string) ([]UR
 		return nil, err
 	}
 	return pairs, nil
+}
+
+func (p *PostgresStorage) DeleteURLs(ctx context.Context, ids []string, userID string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	// Преобразуем срез в массив для использования с ANY
+	query := `UPDATE urls SET is_deleted = true WHERE id = ANY($1) AND user_id = $2`
+	_, err := p.db.ExecContext(ctx, query, pq.Array(ids), userID)
+	return err
 }
