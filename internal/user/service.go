@@ -37,20 +37,20 @@ func (s *userService) EnsureUser(w http.ResponseWriter, r *http.Request) context
 		userID = auth.GenerateUserID()
 		s.SetUserCookie(w, userID)
 	}
-	return context.WithValue(r.Context(), userIDContextKey, userID)
+	return context.WithValue(r.Context(), UserIDContextKey, userID)
 }
 
 type contextKey string
 
-const userIDContextKey contextKey = "userID"
+const UserIDContextKey contextKey = "userID"
 
 func GetUserIDFromContext(ctx context.Context) string {
-	if id, ok := ctx.Value(userIDContextKey).(string); ok {
+	if id, ok := ctx.Value(UserIDContextKey).(string); ok {
 		return id
 	}
 	return ""
 }
 
 func WithUserID(ctx context.Context, userID string) context.Context {
-	return context.WithValue(ctx, userIDContextKey, userID)
+	return context.WithValue(ctx, UserIDContextKey, userID)
 }

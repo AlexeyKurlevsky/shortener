@@ -33,12 +33,7 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler
 
 // CreateShortURL – получение userID из контекста
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
-	userID := user.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
+	userID := r.Context().Value(user.UserIDContextKey).(string)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Failed to read body", http.StatusInternalServerError)
@@ -91,12 +86,7 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
-	userID := user.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
+	userID := r.Context().Value(user.UserIDContextKey).(string)
 	var req models.CreateUrlRequest
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
@@ -154,11 +144,7 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
-	userID := user.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
+	userID := r.Context().Value(user.UserIDContextKey).(string)
 
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
@@ -205,12 +191,7 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID := user.GetUserIDFromContext(r.Context())
-	if userID == "" {
-		http.Error(w, "Unauthorized", http.StatusUnauthorized)
-		return
-	}
-
+	userID := r.Context().Value(user.UserIDContextKey).(string)
 	pairs, err := h.storage.GetAllByUser(r.Context(), userID)
 	if err != nil {
 		logger.Log.Error("failed to get user URLs", zap.Error(err))
