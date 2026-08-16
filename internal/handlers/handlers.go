@@ -13,7 +13,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
-	"github.com/AlexeyKurlevsky/shortener/internal/user" // для получения userID из контекста
+	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
@@ -32,7 +32,6 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler
 	return &Handler{storage: storage, cfg: cfg, db: db}
 }
 
-// CreateShortURL – получение userID из контекста
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 	body, err := io.ReadAll(r.Body)
@@ -78,7 +77,7 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, storage.ErrNotFound) {
 			http.Error(w, "URL not found", http.StatusNotFound)
 		} else if errors.Is(err, storage.ErrGone) {
-			http.Error(w, "URL is gone", http.StatusGone) // 410
+			http.Error(w, "URL is gone", http.StatusGone)
 		} else {
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 		}
