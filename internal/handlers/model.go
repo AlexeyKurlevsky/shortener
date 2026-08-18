@@ -11,174 +11,97 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	defaultWorkers = 5    // количество параллельных воркеров
-	taskChanSize   = 1000 // буфер общего канала
-	workerChanSize = 100  // буфер каждого канала воркера
-)
-
-// DeleteTask – задача на удаление одного URL для конкретного пользователя
-type DeleteTask struct {
+type deleteTask struct {
 	UserID string
 	ID     string
 }
 
 type Handler struct {
-	storage storage.Storage
-	cfg     *config.Config
-	db      Pinger
-
-	// Fan‑In канал – сюда хендлеры отправляют задачи
-	taskChan chan DeleteTask
-
-	// Fan‑Out каналы – по одному на каждого воркера
-	workerChans []chan DeleteTask
-
-	wg         sync.WaitGroup
-	ctx        context.Context
-	cancel     context.CancelFunc
-	numWorkers int
+	storage       storage.Storage
+	cfg           *config.Config
+	db            Pinger
+	deleteChan    chan deleteTask
+	wg            sync.WaitGroup
+	ctx           context.Context
+	cancel        context.CancelFunc
+	batchSize     int
+	flushInterval time.Duration
 }
 
 func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
-
 	h := &Handler{
-		storage:     storage,
-		cfg:         cfg,
-		db:          db,
-		taskChan:    make(chan DeleteTask, taskChanSize),
-		workerChans: make([]chan DeleteTask, defaultWorkers),
-		ctx:         ctx,
-		cancel:      cancel,
-		numWorkers:  defaultWorkers,
+		storage:       storage,
+		cfg:           cfg,
+		db:            db,
+		deleteChan:    make(chan deleteTask, 1000),
+		ctx:           ctx,
+		cancel:        cancel,
+		batchSize:     100,             // размер батча
+		flushInterval: 5 * time.Second, // интервал принудительного сброса
 	}
-
-	// Создаём каналы для каждого воркера
-	for i := 0; i < h.numWorkers; i++ {
-		h.workerChans[i] = make(chan DeleteTask, workerChanSize)
-	}
-
-	// Запускаем диспетчер (Fan‑Out)
 	h.wg.Add(1)
-	go h.dispatcher()
-
-	// Запускаем воркеров
-	for i := 0; i < h.numWorkers; i++ {
-		h.wg.Add(1)
-		go h.worker(i, h.workerChans[i])
-	}
-
+	go h.deleteWorker()
 	return h
 }
 
-// Shutdown завершает работу обработчиков, дожидаясь завершения всех горутин
-func (h *Handler) Shutdown() {
-	// Сигнал остановки всем горутинам
+// Close останавливает воркер и ждёт его завершения
+func (h *Handler) Close() {
 	h.cancel()
-	// Закрываем входной канал – диспетчер дочитает оставшиеся задачи и закроет каналы воркеров
-	close(h.taskChan)
-	// Ждём завершения всех горутин (диспетчер + воркеры)
+	close(h.deleteChan)
 	h.wg.Wait()
 }
 
-// Паттерн FanOut
-func (h *Handler) dispatcher() {
+// deleteWorker – воркер, реализующий паттерн fan‑in
+func (h *Handler) deleteWorker() {
 	defer h.wg.Done()
-	defer func() {
-		// Когда диспетчер завершается, закрываем все каналы воркеров
-		for _, ch := range h.workerChans {
-			close(ch)
-		}
-	}()
+	ticker := time.NewTicker(h.flushInterval)
+	defer ticker.Stop()
 
-	workerIndex := 0
-	for task := range h.taskChan {
-		// Выбираем следующего воркера по кругу
-		workerIdx := workerIndex % h.numWorkers
-		workerIndex++
+	batch := make([]deleteTask, 0, h.batchSize*2)
 
+	for {
 		select {
+		case task, ok := <-h.deleteChan:
+			if !ok {
+				// канал закрыт – сбрасываем оставшиеся задачи
+				h.flushBatch(batch)
+				return
+			}
+			batch = append(batch, task)
+			if len(batch) >= h.batchSize {
+				h.flushBatch(batch)
+				batch = make([]deleteTask, 0, h.batchSize*2)
+			}
+
+		case <-ticker.C:
+			if len(batch) > 0 {
+				h.flushBatch(batch)
+				batch = make([]deleteTask, 0, h.batchSize*2)
+			}
+
 		case <-h.ctx.Done():
-			// При сигнале отмены завершаемся (оставшиеся задачи будут отброшены)
+			// сигнал завершения – сбрасываем оставшиеся задачи
+			h.flushBatch(batch)
 			return
-		case h.workerChans[workerIdx] <- task:
-			// отправлено успешно
 		}
 	}
 }
 
-func (h *Handler) worker(workerID int, taskChan <-chan DeleteTask) {
-	defer h.wg.Done()
-
-	const (
-		batchSize     = 50 // максимальный размер батча для одного пользователя
-		flushInterval = 5 * time.Second
-	)
-
-	ticker := time.NewTicker(flushInterval)
-	defer ticker.Stop()
-
-	// Локальный буфер: userID -> []ids
-	pending := make(map[string][]string)
-
-	// Функция сброса буфера в БД
-	flush := func() {
-		if len(pending) == 0 {
-			return
-		}
-		for userID, ids := range pending {
-			if len(ids) == 0 {
-				continue
-			}
-			// Копируем, чтобы не держать ссылку на map
-			idsCopy := make([]string, len(ids))
-			copy(idsCopy, ids)
-
-			ctx, cancel := context.WithTimeout(h.ctx, 30*time.Second)
-			if err := h.storage.DeleteURLs(ctx, idsCopy, userID); err != nil {
-				logger.Log.Error("failed to delete URLs",
-					zap.Int("worker", workerID),
-					zap.Error(err),
-					zap.String("userID", userID),
-					zap.Strings("ids", idsCopy))
-			}
-			cancel()
-		}
-		// Очищаем map
-		for k := range pending {
-			delete(pending, k)
-		}
+// flushBatch группирует задачи по UserID и вызывает DeleteURLs для каждой группы
+func (h *Handler) flushBatch(tasks []deleteTask) {
+	if len(tasks) == 0 {
+		return
 	}
-
-	for {
-		select {
-		case <-h.ctx.Done():
-			// Принудительно сбрасываем буфер перед выходом
-			flush()
-			return
-
-		case task, ok := <-taskChan:
-			if !ok {
-				// Канал закрыт – больше задач не будет
-				flush()
-				return
-			}
-			// Добавляем задачу в буфер
-			pending[task.UserID] = append(pending[task.UserID], task.ID)
-
-			// Проверяем общий размер накопленных задач
-			total := 0
-			for _, list := range pending {
-				total += len(list)
-			}
-			if total >= batchSize {
-				flush()
-			}
-
-		case <-ticker.C:
-			// Периодический сброс
-			flush()
+	groups := make(map[string][]string)
+	for _, t := range tasks {
+		groups[t.UserID] = append(groups[t.UserID], t.ID)
+	}
+	for userID, ids := range groups {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		if err := h.storage.DeleteURLs(ctx, ids, userID); err != nil {
+			logger.Log.Error("failed to delete URLs", zap.Error(err), zap.String("userID", userID), zap.Strings("ids", ids))
 		}
+		cancel()
 	}
 }

@@ -207,6 +207,7 @@ func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DeleteUserURLs – отправляет полученные ID в канал (неблокирующая отправка)
 func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 
@@ -227,14 +228,17 @@ func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Отправляем каждую задачу в общий канал (Fan‑In)
 	for _, id := range ids {
-		task := DeleteTask{UserID: userID, ID: id}
 		select {
-		case h.taskChan <- task:
-			// отправлено
+		case h.deleteChan <- deleteTask{UserID: userID, ID: id}:
+			// успешно отправлено
 		case <-h.ctx.Done():
-			http.Error(w, "Service is shutting down", http.StatusServiceUnavailable)
+			// сервер завершается – больше не принимаем задачи
+			http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
+			return
+		default:
+			// канал переполнен – возвращаем ошибку
+			http.Error(w, "Server overloaded, unable to queue deletion", http.StatusServiceUnavailable)
 			return
 		}
 	}
