@@ -11,7 +11,6 @@ import (
 	"github.com/golang-migrate/migrate/v4/database/pgx"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/lib/pq"
 )
 
 //go:embed migrations
@@ -180,7 +179,7 @@ func (p *PostgresStorage) DeleteURLs(ctx context.Context, ids []string, userID s
 		return nil
 	}
 	// Преобразуем срез в массив для использования с ANY
-	query := `UPDATE urls SET is_deleted = true WHERE id = ANY($1) AND user_id = $2`
-	_, err := p.db.ExecContext(ctx, query, pq.Array(ids), userID)
+	query := `UPDATE urls SET is_deleted = true WHERE id = ANY($1::text[]) AND user_id = $2`
+	_, err := p.db.ExecContext(ctx, query, ids, userID)
 	return err
 }

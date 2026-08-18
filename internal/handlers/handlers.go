@@ -7,9 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"time"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
@@ -20,16 +18,6 @@ import (
 
 type Pinger interface {
 	Ping(ctx context.Context) error
-}
-
-type Handler struct {
-	storage storage.Storage
-	cfg     *config.Config
-	db      Pinger
-}
-
-func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler {
-	return &Handler{storage: storage, cfg: cfg, db: db}
 }
 
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
@@ -239,13 +227,17 @@ func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := h.storage.DeleteURLs(ctx, ids, userID); err != nil {
-			logger.Log.Error("failed to delete URLs", zap.Error(err), zap.Strings("ids", ids))
+	// Отправляем каждую задачу в общий канал (Fan‑In)
+	for _, id := range ids {
+		task := DeleteTask{UserID: userID, ID: id}
+		select {
+		case h.taskChan <- task:
+			// отправлено
+		case <-h.ctx.Done():
+			http.Error(w, "Service is shutting down", http.StatusServiceUnavailable)
+			return
 		}
-	}()
+	}
 
 	w.WriteHeader(http.StatusAccepted)
 }
