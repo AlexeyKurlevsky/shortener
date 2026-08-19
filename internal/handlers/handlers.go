@@ -8,11 +8,10 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
-	"github.com/AlexeyKurlevsky/shortener/internal/user" // для получения userID из контекста
+	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
@@ -21,17 +20,6 @@ type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
-type Handler struct {
-	storage storage.Storage
-	cfg     *config.Config
-	db      Pinger
-}
-
-func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler {
-	return &Handler{storage: storage, cfg: cfg, db: db}
-}
-
-// CreateShortURL – получение userID из контекста
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 	body, err := io.ReadAll(r.Body)
@@ -74,8 +62,10 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 	}
 	original, err := h.storage.Get(r.Context(), id)
 	if err != nil {
-		if err == storage.ErrNotFound {
+		if errors.Is(err, storage.ErrNotFound) {
 			http.Error(w, "URL not found", http.StatusNotFound)
+		} else if errors.Is(err, storage.ErrGone) {
+			http.Error(w, "URL is gone", http.StatusGone)
 		} else {
 			http.Error(w, "Internal error", http.StatusInternalServerError)
 		}
@@ -215,4 +205,43 @@ func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
+}
+
+// DeleteUserURLs – отправляет полученные ID в канал (неблокирующая отправка)
+func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID := r.Context().Value(user.UserIDContextKey).(string)
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "Failed to read body", http.StatusBadRequest)
+		return
+	}
+	defer r.Body.Close()
+
+	var ids []string
+	if err := json.Unmarshal(body, &ids); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if len(ids) == 0 {
+		http.Error(w, "Empty list", http.StatusBadRequest)
+		return
+	}
+
+	for _, id := range ids {
+		select {
+		case h.deleteChan <- deleteTask{UserID: userID, ID: id}:
+			// успешно отправлено
+		case <-h.ctx.Done():
+			// сервер завершается – больше не принимаем задачи
+			http.Error(w, "Server is shutting down", http.StatusServiceUnavailable)
+			return
+		default:
+			// канал переполнен – возвращаем ошибку
+			http.Error(w, "Server overloaded, unable to queue deletion", http.StatusServiceUnavailable)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusAccepted)
 }

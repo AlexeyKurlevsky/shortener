@@ -18,5 +18,6 @@ func NewRouter(h *handlers.Handler, userSvc user.UserService) *chi.Mux {
 	r.Get("/ping", h.PingHandler)
 	r.Post("/api/shorten/batch", h.BatchCreateShortURL)
 	r.Get("/api/user/urls", h.GetUserURLs)
+	r.Delete("/api/user/urls", h.DeleteUserURLs)
 	return r
 }

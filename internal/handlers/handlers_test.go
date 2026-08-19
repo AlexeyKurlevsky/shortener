@@ -15,6 +15,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
+	"github.com/go-chi/chi/v5"
 )
 
 // ------------------------------------------------------------
@@ -35,6 +36,7 @@ type mockStorage struct {
 	saveToFileFunc   func(ctx context.Context) error
 	batchSaveFunc    func(ctx context.Context, items []storage.BatchItem, userID string) error
 	getAllByUserFunc func(ctx context.Context, userID string) ([]storage.URLPair, error)
+	deleteURLsFunc   func(ctx context.Context, ids []string, userID string) error // новый метод
 }
 
 func (m *mockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
@@ -91,6 +93,14 @@ func (m *mockStorage) GetAllByUser(ctx context.Context, userID string) ([]storag
 		return m.getAllByUserFunc(ctx, userID)
 	}
 	return nil, nil
+}
+
+// DeleteURLs – реализация нового метода
+func (m *mockStorage) DeleteURLs(ctx context.Context, ids []string, userID string) error {
+	if m.deleteURLsFunc != nil {
+		return m.deleteURLsFunc(ctx, ids, userID)
+	}
+	return nil
 }
 
 // setupTest создаёт Handler с заданным mock-хранилищем и фиктивным Pinger.
@@ -359,6 +369,139 @@ func TestPingHandler(t *testing.T) {
 				if string(body) != "OK" {
 					t.Errorf("body = %q, want %q", body, "OK")
 				}
+			}
+		})
+	}
+}
+
+// TestGetLink проверяет получение оригинального URL и статусы 404, 410, 302.
+func TestGetLink(t *testing.T) {
+	tests := []struct {
+		name         string
+		id           string
+		mockGet      func(ctx context.Context, id string) (string, error)
+		wantStatus   int
+		wantLocation string
+	}{
+		{
+			name:         "successful redirect",
+			id:           "abc123",
+			mockGet:      func(ctx context.Context, id string) (string, error) { return "https://example.com", nil },
+			wantStatus:   http.StatusTemporaryRedirect,
+			wantLocation: "https://example.com",
+		},
+		{
+			name:       "not found",
+			id:         "notexist",
+			mockGet:    func(ctx context.Context, id string) (string, error) { return "", storage.ErrNotFound },
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "gone (deleted)",
+			id:         "deleted",
+			mockGet:    func(ctx context.Context, id string) (string, error) { return "", storage.ErrGone },
+			wantStatus: http.StatusGone,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockStorage{
+				getFunc: tt.mockGet,
+			}
+			h := setupTest(mock)
+
+			req := httptest.NewRequest(http.MethodGet, "/{id}", nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", tt.id)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+			w := httptest.NewRecorder()
+			h.GetLink(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+			if tt.wantStatus == http.StatusTemporaryRedirect {
+				if loc := res.Header.Get("Location"); loc != tt.wantLocation {
+					t.Errorf("Location = %q, want %q", loc, tt.wantLocation)
+				}
+			}
+		})
+	}
+}
+
+// TestDeleteUserURLs проверяет хендлер массового удаления.
+func TestDeleteUserURLs(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       interface{}
+		mockDelete func(ctx context.Context, ids []string, userID string) error
+		wantStatus int
+		wantBody   string
+	}{
+		{
+			name:       "valid request",
+			body:       []string{"abc123", "def456"},
+			mockDelete: func(ctx context.Context, ids []string, userID string) error { return nil },
+			wantStatus: http.StatusAccepted,
+		},
+		{
+			name:       "empty list",
+			body:       []string{},
+			mockDelete: nil, // не должен вызываться
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid JSON",
+			body:       "not a json",
+			mockDelete: nil,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "storage error",
+			body:       []string{"abc123"},
+			mockDelete: func(ctx context.Context, ids []string, userID string) error { return errors.New("db error") },
+			wantStatus: http.StatusAccepted, // асинхронно, ошибка игнорируется (лог)
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockStorage{
+				deleteURLsFunc: tt.mockDelete,
+			}
+			h := setupTest(mock)
+
+			var bodyBytes []byte
+			switch v := tt.body.(type) {
+			case []string:
+				var err error
+				bodyBytes, err = json.Marshal(v)
+				if err != nil {
+					t.Fatalf("failed to marshal: %v", err)
+				}
+			case string:
+				bodyBytes = []byte(v)
+			default:
+				t.Fatalf("unsupported body type")
+			}
+
+			req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", bytes.NewReader(bodyBytes))
+			req.Header.Set("Content-Type", "application/json")
+			req = setUserContext(req, testUserID)
+
+			w := httptest.NewRecorder()
+			h.DeleteUserURLs(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", res.StatusCode, tt.wantStatus)
 			}
 		})
 	}

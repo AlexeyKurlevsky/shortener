@@ -10,8 +10,8 @@ import (
 
 type MemoryStorage struct {
 	mu     sync.RWMutex
-	data   map[string]models.StorageLink // key: shortUrl
-	urlMap map[string]string             // key: originalUrl -> shortUrl
+	data   map[string]models.StorageLink
+	urlMap map[string]string
 }
 
 func NewMemoryStorage() *MemoryStorage {
@@ -30,7 +30,8 @@ func (m *MemoryStorage) Save(ctx context.Context, id, url, userID string) error 
 			ShortUrl:    id,
 			OriginalUrl: url,
 		},
-		UserID: userID,
+		UserID:    userID,
+		IsDeleted: false,
 	}
 	m.data[id] = link
 	m.urlMap[url] = id
@@ -43,6 +44,9 @@ func (m *MemoryStorage) Get(ctx context.Context, id string) (string, error) {
 	link, ok := m.data[id]
 	if !ok {
 		return "", ErrNotFound
+	}
+	if link.IsDeleted {
+		return "", ErrGone
 	}
 	return link.OriginalUrl, nil
 }
@@ -58,7 +62,14 @@ func (m *MemoryStorage) FindIDByURL(ctx context.Context, url string) (string, bo
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	id, ok := m.urlMap[url]
-	return id, ok
+	if !ok {
+		return "", false
+	}
+	link, ok := m.data[id]
+	if !ok || link.IsDeleted {
+		return "", false
+	}
+	return id, true
 }
 
 func (m *MemoryStorage) Load(ctx context.Context) error {
@@ -79,7 +90,8 @@ func (m *MemoryStorage) BatchSave(ctx context.Context, items []BatchItem, userID
 				ShortUrl:    item.ID,
 				OriginalUrl: item.URL,
 			},
-			UserID: userID,
+			UserID:    userID,
+			IsDeleted: false,
 		}
 		m.data[item.ID] = link
 		m.urlMap[item.URL] = item.ID
@@ -92,7 +104,7 @@ func (m *MemoryStorage) GetAllByUser(ctx context.Context, userID string) ([]URLP
 	defer m.mu.RUnlock()
 	var pairs []URLPair
 	for _, link := range m.data {
-		if link.UserID == userID {
+		if link.UserID == userID && !link.IsDeleted {
 			pairs = append(pairs, URLPair{
 				ShortURL:    link.ShortUrl,
 				OriginalURL: link.OriginalUrl,
@@ -100,4 +112,17 @@ func (m *MemoryStorage) GetAllByUser(ctx context.Context, userID string) ([]URLP
 		}
 	}
 	return pairs, nil
+}
+
+func (m *MemoryStorage) DeleteURLs(ctx context.Context, ids []string, userID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, id := range ids {
+		if link, ok := m.data[id]; ok && link.UserID == userID {
+			link.IsDeleted = true
+			m.data[id] = link
+			delete(m.urlMap, link.OriginalUrl)
+		}
+	}
+	return nil
 }
