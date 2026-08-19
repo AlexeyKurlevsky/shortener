@@ -51,12 +51,33 @@ func (p *PostgresStorage) Close() error {
 	return p.db.Close()
 }
 
-func (p *PostgresStorage) Save(ctx context.Context, id, url string) error {
-	_, err := p.db.ExecContext(ctx,
-		`INSERT INTO urls (id, original_url) VALUES ($1, $2)
-         ON CONFLICT (original_url) DO NOTHING`,
-		id, url)
+// ensureUser создаёт пользователя, если его нет
+func (p *PostgresStorage) ensureUser(ctx context.Context, tx *sql.Tx, userID string) error {
+	_, err := tx.ExecContext(ctx,
+		`INSERT INTO users (id) VALUES ($1) ON CONFLICT (id) DO NOTHING`,
+		userID)
 	return err
+}
+
+func (p *PostgresStorage) Save(ctx context.Context, id, url, userID string) error {
+	tx, err := p.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if err := p.ensureUser(ctx, tx, userID); err != nil {
+		return err
+	}
+
+	_, err = tx.ExecContext(ctx,
+		`INSERT INTO urls (id, original_url, user_id) VALUES ($1, $2, $3)
+		 ON CONFLICT (original_url) DO NOTHING`,
+		id, url, userID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (p *PostgresStorage) Get(ctx context.Context, id string) (string, error) {
@@ -98,20 +119,49 @@ func (p *PostgresStorage) Ping(ctx context.Context) error {
 	return p.db.PingContext(ctx)
 }
 
-func (p *PostgresStorage) BatchSave(ctx context.Context, items []BatchItem) error {
+func (p *PostgresStorage) BatchSave(ctx context.Context, items []BatchItem, userID string) error {
 	tx, err := p.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
+	if err := p.ensureUser(ctx, tx, userID); err != nil {
+		return err
+	}
+
 	for _, item := range items {
 		_, err = tx.ExecContext(ctx,
-			`INSERT INTO urls (id, original_url) VALUES ($1, $2) ON CONFLICT (original_url) DO NOTHING`,
-			item.ID, item.URL)
+			`INSERT INTO urls (id, original_url, user_id) VALUES ($1, $2, $3)
+			 ON CONFLICT (original_url) DO NOTHING`,
+			item.ID, item.URL, userID)
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+func (p *PostgresStorage) GetAllByUser(ctx context.Context, userID string) ([]URLPair, error) {
+	rows, err := p.db.QueryContext(ctx,
+		`SELECT id, original_url FROM urls WHERE user_id = $1`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var pairs []URLPair
+	for rows.Next() {
+		var id, original string
+		if err := rows.Scan(&id, &original); err != nil {
+			return nil, err
+		}
+		pairs = append(pairs, URLPair{
+			ShortURL:    id,
+			OriginalURL: original,
+		})
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	return pairs, nil
 }

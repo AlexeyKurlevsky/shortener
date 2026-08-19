@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"flag"
 	"log"
 	"strings"
@@ -15,9 +17,11 @@ type Config struct {
 	LogLevel        string `env:"LOG"`
 	FileStoragePath string `env:"FILE_STORAGE_PATH"`
 	DatabaseDSN     string `env:"DATABASE_DSN"`
+	SecretKey       string `env:"SECRET_KEY"`
+	SecretKeyByte   []byte
 }
 
-func NewConfig() *Config {
+func NewConfig() (*Config, error) {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("No .env file found, relying on system envs")
@@ -30,6 +34,7 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.FileStoragePath, "f", "storage.json", "path file storage")
 	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "DB DSN")
+	flag.StringVar(&cfg.SecretKey, "s", "", "secret key for cookie signing (base64)")
 	flag.Parse()
 
 	if err := env.Parse(cfg); err != nil {
@@ -40,5 +45,19 @@ func NewConfig() *Config {
 		cfg.BaseURL = "http://" + cfg.BaseURL
 	}
 
-	return cfg
+	if cfg.SecretKey != "" {
+		key, err := base64.StdEncoding.DecodeString(cfg.SecretKey)
+		if err != nil {
+			return nil, err
+		}
+		cfg.SecretKeyByte = key
+	} else {
+		key := make([]byte, 32)
+		if _, err := rand.Read(key); err != nil {
+			return nil, err
+		}
+		cfg.SecretKeyByte = key
+	}
+
+	return cfg, nil
 }

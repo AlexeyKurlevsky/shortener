@@ -9,11 +9,15 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"go.uber.org/zap"
 )
 
 func main() {
-	cfg := config.NewConfig()
+	cfg, err := config.NewConfig()
+	if err != nil {
+		log.Fatalf("Incorrect config: %v", err)
+	}
 
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
@@ -28,7 +32,7 @@ func main() {
 			logger.Log.Fatal("Failed to init PostgreSQL storage", zap.Error(err))
 		}
 		defer pgStore.Close()
-		logger.Log.Info("Use posgtres for storage")
+		logger.Log.Info("Use postgres for storage")
 		st = pgStore
 		pinger = pgStore
 	} else if cfg.FileStoragePath != "" {
@@ -44,7 +48,10 @@ func main() {
 	}
 
 	h := handlers.NewHandler(st, cfg, pinger)
-	r := server.NewRouter(h)
+
+	userSvc := user.NewUserService(cfg)
+
+	r := server.NewRouter(h, userSvc)
 
 	logger.Log.Info("Config",
 		zap.String("ServerAddr", cfg.ServerAddr),

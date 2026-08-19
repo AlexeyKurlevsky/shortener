@@ -9,6 +9,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const testUserID = "test-user"
+
 func TestMemoryStorage(t *testing.T) {
 	s := NewMemoryStorage()
 	testStorage(t, s)
@@ -27,7 +29,7 @@ func TestJSONStorage(t *testing.T) {
 	// Дополнительно проверяем корректность urlMap при перезаписи
 	t.Run("overwrite and urlMap", func(t *testing.T) {
 		// сохраняем abc -> example.com
-		err := s.Save(context.Background(), "abc", "https://example.com")
+		err := s.Save(context.Background(), "abc", "https://example.com", testUserID)
 		require.NoError(t, err)
 
 		// проверяем, что FindIDByURL находит
@@ -36,7 +38,7 @@ func TestJSONStorage(t *testing.T) {
 		assert.Equal(t, "abc", id)
 
 		// перезаписываем abc -> new.com
-		err = s.Save(context.Background(), "abc", "https://new.com")
+		err = s.Save(context.Background(), "abc", "https://new.com", testUserID)
 		require.NoError(t, err)
 
 		// старый URL больше не должен находиться
@@ -57,7 +59,7 @@ func TestJSONStorage(t *testing.T) {
 
 // Общий тест для всех хранилищ
 func testStorage(t *testing.T, s Storage) {
-	err := s.Save(context.Background(), "abc", "https://example.com")
+	err := s.Save(context.Background(), "abc", "https://example.com", testUserID)
 	assert.NoError(t, err)
 
 	val, err := s.Get(context.Background(), "abc")
@@ -70,14 +72,14 @@ func testStorage(t *testing.T, s Storage) {
 	_, err = s.Get(context.Background(), "nonexistent")
 	assert.Equal(t, ErrNotFound, err)
 
-	err = s.Save(context.Background(), "abc", "https://new.com")
+	err = s.Save(context.Background(), "abc", "https://new.com", testUserID)
 	assert.NoError(t, err)
 	val, err = s.Get(context.Background(), "abc")
 	assert.NoError(t, err)
 	assert.Equal(t, "https://new.com", val)
 
 	if js, ok := s.(*JSONStorage); ok {
-		err = js.Save(context.Background(), "def", "https://def.com")
+		err = js.Save(context.Background(), "def", "https://def.com", testUserID)
 		assert.NoError(t, err)
 
 		s2, err := NewJSONStorage(js.filePath)
@@ -95,7 +97,7 @@ func testStorage(t *testing.T, s Storage) {
 			{ID: "batch1", URL: "https://batch1.com"},
 			{ID: "batch2", URL: "https://batch2.com"},
 		}
-		err := s.BatchSave(context.Background(), items)
+		err := s.BatchSave(context.Background(), items, testUserID)
 		assert.NoError(t, err)
 
 		val, err := s.Get(context.Background(), "batch1")
@@ -111,7 +113,7 @@ func testStorage(t *testing.T, s Storage) {
 		assert.Equal(t, "batch1", id)
 	})
 
-	err = s.Save(context.Background(), "abc", "https://example.com")
+	err = s.Save(context.Background(), "abc", "https://example.com", testUserID)
 	assert.NoError(t, err)
 	id, ok := s.FindIDByURL(context.Background(), "https://example.com")
 	assert.True(t, ok)
