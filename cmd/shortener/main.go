@@ -4,9 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"os/signal"
-	"syscall"
-	"time"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
@@ -28,16 +25,15 @@ func main() {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 
-	// ---- Аудит: собираем издателя и подписчиков ----
+	// ---- Аудит ----
+	// Publisher запускаем с context.Background():
 	auditPublisher := audit.NewPublisher(2048)
 
-	var fileObs *audit.FileObserver
 	if cfg.AuditFile != "" {
-		fo, err := audit.NewFileObserver(cfg.AuditFile)
+		fileObs, err := audit.NewFileObserver(cfg.AuditFile)
 		if err != nil {
 			logger.Log.Fatal("Failed to init audit file", zap.Error(err))
 		}
-		fileObs = fo
 		auditPublisher.Subscribe(fileObs)
 		logger.Log.Info("Audit: file observer enabled", zap.String("path", cfg.AuditFile))
 	}
@@ -47,10 +43,7 @@ func main() {
 		logger.Log.Info("Audit: http observer enabled", zap.String("url", cfg.AuditURL))
 	}
 
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
-
-	auditPublisher.Start(ctx)
+	auditPublisher.Start(context.Background())
 
 	// ---- Storage ----
 	var st storage.Storage
@@ -77,9 +70,7 @@ func main() {
 		st = storage.NewMemoryStorage()
 	}
 
-	// ---- Хендлеры: прокидываем publisher ----
 	h := handlers.NewHandler(st, cfg, pinger, auditPublisher)
-
 	userSvc := user.NewUserService(cfg)
 	r := server.NewRouter(h, userSvc)
 
@@ -91,23 +82,7 @@ func main() {
 		zap.String("AuditURL", cfg.AuditURL),
 	)
 
-	srv := &http.Server{Addr: cfg.ServerAddr, Handler: r}
-
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Log.Fatal("Server failed", zap.Error(err))
-		}
-	}()
-
-	<-ctx.Done()
-	logger.Log.Info("Shutting down...")
-
-	shutCtx, shutCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutCancel()
-	_ = srv.Shutdown(shutCtx)
-
-	auditPublisher.Close()
-	if fileObs != nil {
-		_ = fileObs.Close()
+	if err := http.ListenAndServe(cfg.ServerAddr, r); err != nil {
+		logger.Log.Fatal("Server failed: %v", zap.Error(err))
 	}
 }
