@@ -9,14 +9,45 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"github.com/go-chi/chi/v5"
 )
+
+// ------------------------------------------------------------
+// Заглушки аудита
+// ------------------------------------------------------------
+
+// nopPublisher — для тестов, где события аудита не важны.
+type nopPublisher struct{}
+
+func (nopPublisher) Publish(context.Context, audit.Event) {}
+
+// spyPublisher — собирает события в памяти для последующих проверок.
+type spyPublisher struct {
+	mu     sync.Mutex
+	events []audit.Event
+}
+
+func (s *spyPublisher) Publish(_ context.Context, e audit.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = append(s.events, e)
+}
+
+func (s *spyPublisher) snapshot() []audit.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]audit.Event, len(s.events))
+	copy(out, s.events)
+	return out
+}
 
 // ------------------------------------------------------------
 // Тестовые вспомогательные типы и функции
@@ -36,7 +67,7 @@ type mockStorage struct {
 	saveToFileFunc   func(ctx context.Context) error
 	batchSaveFunc    func(ctx context.Context, items []storage.BatchItem, userID string) error
 	getAllByUserFunc func(ctx context.Context, userID string) ([]storage.URLPair, error)
-	deleteURLsFunc   func(ctx context.Context, ids []string, userID string) error // новый метод
+	deleteURLsFunc   func(ctx context.Context, ids []string, userID string) error
 }
 
 func (m *mockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
@@ -95,7 +126,6 @@ func (m *mockStorage) GetAllByUser(ctx context.Context, userID string) ([]storag
 	return nil, nil
 }
 
-// DeleteURLs – реализация нового метода
 func (m *mockStorage) DeleteURLs(ctx context.Context, ids []string, userID string) error {
 	if m.deleteURLsFunc != nil {
 		return m.deleteURLsFunc(ctx, ids, userID)
@@ -103,13 +133,18 @@ func (m *mockStorage) DeleteURLs(ctx context.Context, ids []string, userID strin
 	return nil
 }
 
-// setupTest создаёт Handler с заданным mock-хранилищем и фиктивным Pinger.
+// setupTest создаёт Handler с mock-хранилищем и заглушкой аудита.
 func setupTest(mock *mockStorage) *Handler {
+	return setupTestWithAudit(mock, nopPublisher{})
+}
+
+// setupTestWithAudit — вариант с явным паблишером (для проверок аудита).
+func setupTestWithAudit(mock *mockStorage, pub AuditPublisher) *Handler {
 	cfg := &config.Config{
 		ServerAddr: ":8080",
 		BaseURL:    "http://localhost:8080",
 	}
-	return NewHandler(mock, cfg, dummyPinger{})
+	return NewHandler(mock, cfg, dummyPinger{}, pub)
 }
 
 // mockPinger для тестирования PingHandler
@@ -126,7 +161,6 @@ func (m mockPinger) Ping(ctx context.Context) error {
 
 const testUserID = "test-user-id"
 
-// setUserContext добавляет userID в контекст запроса с помощью экспортируемой функции user.WithUserID.
 func setUserContext(r *http.Request, userID string) *http.Request {
 	ctx := user.WithUserID(r.Context(), userID)
 	return r.WithContext(ctx)
@@ -351,7 +385,7 @@ func TestPingHandler(t *testing.T) {
 				},
 			}
 			cfg := &config.Config{ServerAddr: ":8080", BaseURL: "http://localhost:8080"}
-			h := NewHandler(nil, cfg, mock)
+			h := NewHandler(nil, cfg, mock, nopPublisher{})
 
 			req := httptest.NewRequest(http.MethodGet, "/ping", nil)
 			w := httptest.NewRecorder()
@@ -374,7 +408,6 @@ func TestPingHandler(t *testing.T) {
 	}
 }
 
-// TestGetLink проверяет получение оригинального URL и статусы 404, 410, 302.
 func TestGetLink(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -406,9 +439,7 @@ func TestGetLink(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{
-				getFunc: tt.mockGet,
-			}
+			mock := &mockStorage{getFunc: tt.mockGet}
 			h := setupTest(mock)
 
 			req := httptest.NewRequest(http.MethodGet, "/{id}", nil)
@@ -434,7 +465,6 @@ func TestGetLink(t *testing.T) {
 	}
 }
 
-// TestDeleteUserURLs проверяет хендлер массового удаления.
 func TestDeleteUserURLs(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -452,7 +482,7 @@ func TestDeleteUserURLs(t *testing.T) {
 		{
 			name:       "empty list",
 			body:       []string{},
-			mockDelete: nil, // не должен вызываться
+			mockDelete: nil,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -465,15 +495,13 @@ func TestDeleteUserURLs(t *testing.T) {
 			name:       "storage error",
 			body:       []string{"abc123"},
 			mockDelete: func(ctx context.Context, ids []string, userID string) error { return errors.New("db error") },
-			wantStatus: http.StatusAccepted, // асинхронно, ошибка игнорируется (лог)
+			wantStatus: http.StatusAccepted,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{
-				deleteURLsFunc: tt.mockDelete,
-			}
+			mock := &mockStorage{deleteURLsFunc: tt.mockDelete}
 			h := setupTest(mock)
 
 			var bodyBytes []byte
@@ -505,4 +533,116 @@ func TestDeleteUserURLs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ------------------------------------------------------------
+// Тесты аудита
+// ------------------------------------------------------------
+
+func TestAuditOnShorten(t *testing.T) {
+	mock := &mockStorage{
+		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		existsFunc:      func(ctx context.Context, id string) bool { return false },
+		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	}
+	spy := &spyPublisher{}
+	h := setupTestWithAudit(mock, spy)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://example.com"))
+	req = setUserContext(req, testUserID)
+	w := httptest.NewRecorder()
+	h.CreateShortURL(w, req)
+
+	events := spy.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Action != audit.ActionShorten {
+		t.Errorf("action = %q, want %q", e.Action, audit.ActionShorten)
+	}
+	if e.UserID != testUserID {
+		t.Errorf("user_id = %q, want %q", e.UserID, testUserID)
+	}
+	if e.URL != "https://example.com" {
+		t.Errorf("url = %q, want %q", e.URL, "https://example.com")
+	}
+	if e.TS == 0 {
+		t.Errorf("ts is zero")
+	}
+}
+
+func TestAuditOnFollow(t *testing.T) {
+	mock := &mockStorage{
+		getFunc: func(ctx context.Context, id string) (string, error) {
+			return "https://example.com/target", nil
+		},
+	}
+	spy := &spyPublisher{}
+	h := setupTestWithAudit(mock, spy)
+
+	req := httptest.NewRequest(http.MethodGet, "/{id}", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "abc123")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	w := httptest.NewRecorder()
+	h.GetLink(w, req)
+
+	events := spy.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 audit event, got %d", len(events))
+	}
+	e := events[0]
+	if e.Action != audit.ActionFollow {
+		t.Errorf("action = %q, want %q", e.Action, audit.ActionFollow)
+	}
+	if e.URL != "https://example.com/target" {
+		t.Errorf("url = %q, want %q", e.URL, "https://example.com/target")
+	}
+	// userID для follow может быть пустым — это допустимо.
+}
+
+// Проверяем, что при ошибке (409 Conflict / 404) событие НЕ публикуется.
+func TestAuditNotPublishedOnFailure(t *testing.T) {
+	t.Run("shorten conflict", func(t *testing.T) {
+		mock := &mockStorage{
+			findIDByURLFunc: func(ctx context.Context, url string) (string, bool) {
+				return "abc123", true
+			},
+		}
+		spy := &spyPublisher{}
+		h := setupTestWithAudit(mock, spy)
+
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://example.com"))
+		req = setUserContext(req, testUserID)
+		w := httptest.NewRecorder()
+		h.CreateShortURL(w, req)
+
+		if got := len(spy.snapshot()); got != 0 {
+			t.Errorf("expected 0 audit events on conflict, got %d", got)
+		}
+	})
+
+	t.Run("follow not found", func(t *testing.T) {
+		mock := &mockStorage{
+			getFunc: func(ctx context.Context, id string) (string, error) {
+				return "", storage.ErrNotFound
+			},
+		}
+		spy := &spyPublisher{}
+		h := setupTestWithAudit(mock, spy)
+
+		req := httptest.NewRequest(http.MethodGet, "/{id}", nil)
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", "missing")
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+		w := httptest.NewRecorder()
+		h.GetLink(w, req)
+
+		if got := len(spy.snapshot()); got != 0 {
+			t.Errorf("expected 0 audit events on 404, got %d", got)
+		}
+	})
 }

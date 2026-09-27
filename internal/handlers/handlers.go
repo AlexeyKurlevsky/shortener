@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
@@ -48,6 +50,13 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.Publish(r.Context(), audit.Event{
+		TS:     time.Now().Unix(),
+		Action: audit.ActionShorten,
+		UserID: userID,
+		URL:    link,
+	})
+
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(shortLink.GetStatusCode())
 	fullLink := shortLink.GetFullLink(h.cfg.BaseURL)
@@ -71,6 +80,18 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	var userID string
+	if v := r.Context().Value(user.UserIDContextKey); v != nil {
+		userID, _ = v.(string)
+	}
+	h.audit.Publish(r.Context(), audit.Event{
+		TS:     time.Now().Unix(),
+		Action: audit.ActionFollow,
+		UserID: userID,
+		URL:    original,
+	})
+
 	w.Header().Set("Location", original)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -107,6 +128,13 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	h.audit.Publish(r.Context(), audit.Event{
+		TS:     time.Now().Unix(),
+		Action: audit.ActionShorten,
+		UserID: userID,
+		URL:    req.Url,
+	})
 
 	resp := models.ShortUrlResponse{
 		Result: shortLink.GetFullLink(h.cfg.BaseURL),
@@ -172,6 +200,15 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, item := range reqItems {
+		h.audit.Publish(r.Context(), audit.Event{
+			TS:     time.Now().Unix(),
+			Action: audit.ActionShorten,
+			UserID: userID,
+			URL:    item.OriginalURL,
+		})
+	}
+
 	respItems := buildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -207,7 +244,6 @@ func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DeleteUserURLs – отправляет полученные ID в канал (неблокирующая отправка)
 func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 
