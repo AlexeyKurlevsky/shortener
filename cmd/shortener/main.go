@@ -1,9 +1,11 @@
 package main
 
 import (
+	"context"
 	"log"
 	"net/http"
 
+	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
@@ -23,6 +25,27 @@ func main() {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
 
+	// ---- Аудит ----
+	// Publisher запускаем с context.Background():
+	auditPublisher := audit.NewPublisher(2048)
+
+	if cfg.AuditFile != "" {
+		fileObs, err := audit.NewFileObserver(cfg.AuditFile)
+		if err != nil {
+			logger.Log.Fatal("Failed to init audit file", zap.Error(err))
+		}
+		auditPublisher.Subscribe(fileObs)
+		logger.Log.Info("Audit: file observer enabled", zap.String("path", cfg.AuditFile))
+	}
+
+	if cfg.AuditURL != "" {
+		auditPublisher.Subscribe(audit.NewHTTPObserver(cfg.AuditURL))
+		logger.Log.Info("Audit: http observer enabled", zap.String("url", cfg.AuditURL))
+	}
+
+	auditPublisher.Start(context.Background())
+
+	// ---- Storage ----
 	var st storage.Storage
 	var pinger handlers.Pinger
 
@@ -47,17 +70,18 @@ func main() {
 		st = storage.NewMemoryStorage()
 	}
 
-	h := handlers.NewHandler(st, cfg, pinger)
-
+	h := handlers.NewHandler(st, cfg, pinger, auditPublisher)
 	userSvc := user.NewUserService(cfg)
-
 	r := server.NewRouter(h, userSvc)
 
 	logger.Log.Info("Config",
 		zap.String("ServerAddr", cfg.ServerAddr),
 		zap.String("BaseURL", cfg.BaseURL),
 		zap.String("FileStoragePath", cfg.FileStoragePath),
+		zap.String("AuditFile", cfg.AuditFile),
+		zap.String("AuditURL", cfg.AuditURL),
 	)
+
 	if err := http.ListenAndServe(cfg.ServerAddr, r); err != nil {
 		logger.Log.Fatal("Server failed: %v", zap.Error(err))
 	}
