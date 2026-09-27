@@ -98,7 +98,7 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
-	var req models.CreateUrlRequest
+	var req models.CreateURLRequest
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
@@ -106,11 +106,11 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortLink, err := handleShorten(r.Context(), req.Url, h.storage, userID)
+	shortLink, err := handleShorten(r.Context(), req.URL, h.storage, userID)
 	if err != nil {
 		var dupErr *DuplicateURLError
 		if errors.As(err, &dupErr) {
-			resp := models.ShortUrlResponse{
+			resp := models.ShortURLResponse{
 				Result: h.cfg.BaseURL + "/" + dupErr.ExistingID,
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -133,10 +133,10 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		TS:     time.Now().Unix(),
 		Action: audit.ActionShorten,
 		UserID: userID,
-		URL:    req.Url,
+		URL:    req.URL,
 	})
 
-	resp := models.ShortUrlResponse{
+	resp := models.ShortURLResponse{
 		Result: shortLink.GetFullLink(h.cfg.BaseURL),
 	}
 	w.Header().Set("Content-Type", "application/json")

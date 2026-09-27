@@ -269,7 +269,7 @@ func TestCreateShortURLJson(t *testing.T) {
 	}{
 		{
 			name:           "success new URL",
-			body:           models.CreateUrlRequest{Url: "https://example.com"},
+			body:           models.CreateURLRequest{URL: "https://example.com"},
 			mockFind:       func(ctx context.Context, url string) (string, bool) { return "", false },
 			mockExists:     func(ctx context.Context, id string) bool { return false },
 			mockSave:       func(ctx context.Context, id, url, userID string) error { return nil },
@@ -278,14 +278,14 @@ func TestCreateShortURLJson(t *testing.T) {
 		},
 		{
 			name:           "existing URL – returns 409 Conflict",
-			body:           models.CreateUrlRequest{Url: "https://example.com"},
+			body:           models.CreateURLRequest{URL: "https://example.com"},
 			mockFind:       func(ctx context.Context, url string) (string, bool) { return "abc123", true },
 			wantStatus:     http.StatusConflict,
 			wantBodyResult: "http://localhost:8080/abc123",
 		},
 		{
 			name:       "invalid URL",
-			body:       models.CreateUrlRequest{Url: "not-a-url"},
+			body:       models.CreateURLRequest{URL: "not-a-url"},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
@@ -295,7 +295,7 @@ func TestCreateShortURLJson(t *testing.T) {
 		},
 		{
 			name:       "save fails",
-			body:       models.CreateUrlRequest{Url: "https://example.com"},
+			body:       models.CreateURLRequest{URL: "https://example.com"},
 			mockFind:   func(ctx context.Context, url string) (string, bool) { return "", false },
 			mockExists: func(ctx context.Context, id string) bool { return false },
 			mockSave:   func(ctx context.Context, id, url, userID string) error { return errors.New("storage error") },
@@ -314,7 +314,7 @@ func TestCreateShortURLJson(t *testing.T) {
 
 			var bodyBytes []byte
 			switch v := tt.body.(type) {
-			case models.CreateUrlRequest:
+			case models.CreateURLRequest:
 				var err error
 				bodyBytes, err = json.Marshal(v)
 				if err != nil {
@@ -341,7 +341,7 @@ func TestCreateShortURLJson(t *testing.T) {
 			}
 
 			if tt.wantBodyResult != "" {
-				var resp models.ShortUrlResponse
+				var resp models.ShortURLResponse
 				if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
 					t.Fatalf("failed to decode response: %v", err)
 				}
