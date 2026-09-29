@@ -30,3 +30,6 @@ lint_imports:
 
 doc:
 	go doc ./internal/handlers/
+
+doc_web:
+	godoc -http=:8888
