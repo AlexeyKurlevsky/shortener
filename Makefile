@@ -27,3 +27,6 @@ bench_test:
 
 lint_imports:
 	goimports -local "github.com/AlexeyKurlevsky/shortener" -w .
+
+doc:
+	go doc ./internal/handlers/

@@ -1,3 +1,8 @@
+// Package handlers содержит HTTP-обработчики сервиса сокращения ссылок.
+//
+// Обработчики извлекают идентификатор пользователя из контекста запроса
+// (user.UserIDContextKey), публикуют события аудита и формируют ответы
+// в формате text/plain или application/json в зависимости от эндпоинта.
 package handlers
 
 import (
@@ -19,10 +24,27 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
 )
 
+// Pinger описывает зависимость, доступность которой можно проверить.
+// Используется PingHandler для проверки соединения с БД.
+// Реализация Ping должна вернуть nil, если зависимость доступна.
 type Pinger interface {
 	Ping(ctx context.Context) error
 }
 
+// CreateShortURL создаёт короткую ссылку из URL, переданного в теле запроса
+// как text/plain.
+//
+// Ожидает, что идентификатор пользователя уже находится в контексте запроса
+// по ключу user.UserIDContextKey.
+//
+// Успешный ответ: text/plain с полной короткой ссылкой и статусом, который
+// возвращает shortLink.GetStatusCode() (обычно 201 Created).
+// При дубликате возвращает 409 Conflict и text/plain с уже существующей
+// короткой ссылкой.
+// Ошибка чтения тела — 500 Internal Server Error.
+// Ошибки приложения возвращаются согласно models.AppError.
+//
+// Публикует событие аудита audit.ActionShorten.
 func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 	body, err := io.ReadAll(r.Body)
@@ -64,6 +86,19 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(fullLink))
 }
 
+// GetLink выполняет редирект по короткому идентификатору.
+//
+// Идентификатор берётся из chi URL-параметра "id".
+// Если id пустой или содержит "/", возвращает 400 Bad Request.
+// Если ссылка не найдена — 404 Not Found.
+// Если ссылка удалена — 410 Gone.
+// При прочих ошибках хранилища — 500 Internal Server Error.
+//
+// При успехе устанавливает заголовок Location и возвращает
+// 307 Temporary Redirect.
+//
+// Публикует событие аудита audit.ActionFollow.
+// userID берётся из контекста, если присутствует.
 func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if id == "" || strings.Contains(id, "/") {
@@ -97,6 +132,18 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
+// CreateShortURLJson создаёт короткую ссылку из JSON-запроса
+// models.CreateURLRequest.
+//
+// Ожидает userID в контексте по ключу user.UserIDContextKey.
+// При некорректном JSON возвращает 400 Bad Request.
+// При дубликате возвращает 409 Conflict и JSON models.ShortURLResponse
+// с уже существующей короткой ссылкой.
+// При успехе возвращает JSON models.ShortURLResponse и статус, который
+// возвращает shortLink.GetStatusCode() (обычно 201 Created).
+// Ошибки приложения обрабатываются через models.AppError.
+//
+// Публикует событие аудита audit.ActionShorten.
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 	var req models.CreateURLRequest
@@ -147,6 +194,12 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// PingHandler проверяет доступность БД.
+//
+// Если h.db равен nil, сразу возвращает 200 OK с телом "OK".
+// Иначе вызывает h.db.Ping(ctx).
+// При ошибке возвращает 500 Internal Server Error.
+// При успехе — 200 OK с телом "OK".
 func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	if h.db == nil {
 		w.WriteHeader(http.StatusOK)
@@ -162,6 +215,18 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("OK"))
 }
 
+// BatchCreateShortURL пакетно создаёт короткие ссылки из JSON-массива
+// models.BatchRequestItem.
+//
+// Ожидает userID в контексте по ключу user.UserIDContextKey.
+// При ошибке чтения тела — 500 Internal Server Error.
+// При некорректном JSON или пустом массиве — 400 Bad Request.
+// Новые элементы сохраняются через h.storage.BatchSave.
+// При ошибке сохранения — 500 Internal Server Error.
+// При успехе возвращает 201 Created и JSON-массив, построенный
+// buildBatchResponse.
+//
+// Для каждого элемента публикует событие аудита audit.ActionShorten.
 func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 
@@ -218,6 +283,13 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// GetUserURLs возвращает все короткие ссылки текущего пользователя.
+//
+// Ожидает userID в контексте по ключу user.UserIDContextKey.
+// Если у пользователя нет ссылок, возвращает 204 No Content.
+// При успехе возвращает 200 OK и JSON-массив models.URLPair,
+// где ShortURL — полная короткая ссылка на базе h.cfg.BaseURL.
+// При ошибке хранилища — 500 Internal Server Error.
 func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 	pairs, err := h.storage.GetAllByUser(r.Context(), userID)
@@ -245,6 +317,20 @@ func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// DeleteUserURLs ставит в очередь удаление коротких ссылок текущего
+// пользователя.
+//
+// Ожидает userID в контексте по ключу user.UserIDContextKey.
+// Тело запроса — JSON-массив строковых идентификаторов.
+// При ошибке чтения тела, некорректном JSON или пустом списке —
+// 400 Bad Request.
+//
+// Задачи отправляются в h.deleteChan без блокировки:
+//   - если контекст сервера завершён — 503 Service Unavailable;
+//   - если канал переполнен — 503 Service Unavailable.
+//
+// При успешной постановке в очередь возвращает 202 Accepted.
+// Удаление выполняется асинхронно.
 func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 
