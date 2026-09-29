@@ -6,6 +6,8 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
+	"go.uber.org/zap"
+
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
@@ -13,7 +15,6 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
-	"go.uber.org/zap"
 )
 
 func main() {
