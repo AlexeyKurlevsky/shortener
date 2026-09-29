@@ -21,3 +21,6 @@ pprof_cpu:
 
 pprof_top:
 	go tool pprof -proto -output=base.pprof http://localhost:8081/debug/pprof/heap
+
+bench_test:
+	go test -bench=. -benchmem ./internal/handlers
