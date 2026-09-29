@@ -12,6 +12,7 @@ func NewRouter(h *handlers.Handler, userSvc user.UserService) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(mymiddleware.RequestLogger, middleware.Recoverer, mymiddleware.GzipMiddleware)
 	r.Use(mymiddleware.AuthMiddleware(userSvc))
+	r.Mount("/debug", middleware.Profiler())
 	r.Post("/", h.CreateShortURL)
 	r.Post("/api/shorten", h.CreateShortURLJson)
 	r.Get("/{id}", h.GetLink)

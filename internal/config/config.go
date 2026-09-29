@@ -19,6 +19,8 @@ type Config struct {
 	DatabaseDSN     string `env:"DATABASE_DSN"`
 	SecretKey       string `env:"SECRET_KEY"`
 	SecretKeyByte   []byte
+	AuditFile       string `env:"AUDIT_FILE"`
+	AuditURL        string `env:"AUDIT_URL"`
 }
 
 func NewConfig() (*Config, error) {
@@ -35,6 +37,8 @@ func NewConfig() (*Config, error) {
 	flag.StringVar(&cfg.LogLevel, "l", "info", "log level")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "DB DSN")
 	flag.StringVar(&cfg.SecretKey, "s", "", "secret key for cookie signing (base64)")
+	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to audit log file (disabled if empty)")
+	flag.StringVar(&cfg.AuditURL, "audit-url", "", "remote audit server URL (disabled if empty)")
 	flag.Parse()
 
 	if err := env.Parse(cfg); err != nil {
