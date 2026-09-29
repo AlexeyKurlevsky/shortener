@@ -4,8 +4,8 @@ import (
 	"net/http"
 )
 
-type CreateUrlRequest struct {
-	Url string `json:"url"`
+type CreateURLRequest struct {
+	URL string `json:"url"`
 }
 
 type AppError struct {
@@ -17,18 +17,18 @@ func (e AppError) Error() string {
 	return e.Err.Error()
 }
 
-type ShortUrlResponse struct {
+type ShortURLResponse struct {
 	Result string `json:"result"`
 }
 
 type ShortenLink struct {
-	ShortUrl    string `json:"short_url"`
-	OriginalUrl string `json:"original_url"`
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
 	IsNew       bool   `json:"-"`
 }
 
 func (s *ShortenLink) GetFullLink(baseURL string) string {
-	return baseURL + "/" + s.ShortUrl
+	return baseURL + "/" + s.ShortURL
 }
 
 func (s *ShortenLink) GetStatusCode() int {
@@ -39,7 +39,7 @@ func (s *ShortenLink) GetStatusCode() int {
 }
 
 type StorageLink struct {
-	Uuid string `json:"uuid"`
+	UUID string `json:"uuid"`
 	ShortenLink
 	UserID    string `json:"user_id"`
 	IsDeleted bool   `json:"is_deleted"`

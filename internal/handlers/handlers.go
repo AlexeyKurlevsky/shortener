@@ -7,13 +7,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
-	"github.com/go-chi/chi/v5"
-	"go.uber.org/zap"
 )
 
 type Pinger interface {
@@ -48,6 +51,13 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.audit.Publish(r.Context(), audit.Event{
+		TS:     time.Now().Unix(),
+		Action: audit.ActionShorten,
+		UserID: userID,
+		URL:    link,
+	})
+
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(shortLink.GetStatusCode())
 	fullLink := shortLink.GetFullLink(h.cfg.BaseURL)
@@ -71,13 +81,25 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	var userID string
+	if v := r.Context().Value(user.UserIDContextKey); v != nil {
+		userID, _ = v.(string)
+	}
+	h.audit.Publish(r.Context(), audit.Event{
+		TS:     time.Now().Unix(),
+		Action: audit.ActionFollow,
+		UserID: userID,
+		URL:    original,
+	})
+
 	w.Header().Set("Location", original)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
 
 func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
-	var req models.CreateUrlRequest
+	var req models.CreateURLRequest
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(&req); err != nil {
 		logger.Log.Debug("cannot decode request JSON body", zap.Error(err))
@@ -85,11 +107,11 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortLink, err := handleShorten(r.Context(), req.Url, h.storage, userID)
+	shortLink, err := handleShorten(r.Context(), req.URL, h.storage, userID)
 	if err != nil {
 		var dupErr *DuplicateURLError
 		if errors.As(err, &dupErr) {
-			resp := models.ShortUrlResponse{
+			resp := models.ShortURLResponse{
 				Result: h.cfg.BaseURL + "/" + dupErr.ExistingID,
 			}
 			w.Header().Set("Content-Type", "application/json")
@@ -108,7 +130,14 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := models.ShortUrlResponse{
+	h.audit.Publish(r.Context(), audit.Event{
+		TS:     time.Now().Unix(),
+		Action: audit.ActionShorten,
+		UserID: userID,
+		URL:    req.URL,
+	})
+
+	resp := models.ShortURLResponse{
 		Result: shortLink.GetFullLink(h.cfg.BaseURL),
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -172,6 +201,15 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	for _, item := range reqItems {
+		h.audit.Publish(r.Context(), audit.Event{
+			TS:     time.Now().Unix(),
+			Action: audit.ActionShorten,
+			UserID: userID,
+			URL:    item.OriginalURL,
+		})
+	}
+
 	respItems := buildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
@@ -207,7 +245,6 @@ func (h *Handler) GetUserURLs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// DeleteUserURLs – отправляет полученные ID в канал (неблокирующая отправка)
 func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	userID := r.Context().Value(user.UserIDContextKey).(string)
 
