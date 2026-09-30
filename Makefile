@@ -32,4 +32,4 @@ doc:
 	go doc ./internal/handlers/
 
 doc_web:
-	godoc -http=:8888
+	pkgsite -http=:8888
