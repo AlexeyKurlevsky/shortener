@@ -5,16 +5,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"go.uber.org/zap"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 )
 
 func GzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		content_type := r.Header.Get("Content-Type")
+		contentType := r.Header.Get("Content-Type")
 		ow := w
 
-		if content_type == "application/json" || content_type == "text/html" || content_type == "text/plain" {
+		if contentType == "application/json" || contentType == "text/html" || contentType == "text/plain" {
 
 			acceptEncoding := r.Header.Get("Accept-Encoding")
 			supportsGzip := strings.Contains(acceptEncoding, "gzip")
@@ -46,7 +47,7 @@ func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		rw := &logger.MyResponseWriter{
+		rw := &logger.ResponseRecorder{
 			ResponseWriter: w,
 			Status:         http.StatusOK,
 		}

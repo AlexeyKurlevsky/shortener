@@ -4,8 +4,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/google/uuid"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/models"
 )
 
 type MemoryStorage struct {
@@ -25,10 +26,10 @@ func (m *MemoryStorage) Save(ctx context.Context, id, url, userID string) error 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	link := models.StorageLink{
-		Uuid: uuid.New().String(),
+		UUID: uuid.New().String(),
 		ShortenLink: models.ShortenLink{
-			ShortUrl:    id,
-			OriginalUrl: url,
+			ShortURL:    id,
+			OriginalURL: url,
 		},
 		UserID:    userID,
 		IsDeleted: false,
@@ -48,7 +49,7 @@ func (m *MemoryStorage) Get(ctx context.Context, id string) (string, error) {
 	if link.IsDeleted {
 		return "", ErrGone
 	}
-	return link.OriginalUrl, nil
+	return link.OriginalURL, nil
 }
 
 func (m *MemoryStorage) Exists(ctx context.Context, id string) bool {
@@ -85,10 +86,10 @@ func (m *MemoryStorage) BatchSave(ctx context.Context, items []BatchItem, userID
 	defer m.mu.Unlock()
 	for _, item := range items {
 		link := models.StorageLink{
-			Uuid: uuid.New().String(),
+			UUID: uuid.New().String(),
 			ShortenLink: models.ShortenLink{
-				ShortUrl:    item.ID,
-				OriginalUrl: item.URL,
+				ShortURL:    item.ID,
+				OriginalURL: item.URL,
 			},
 			UserID:    userID,
 			IsDeleted: false,
@@ -106,8 +107,8 @@ func (m *MemoryStorage) GetAllByUser(ctx context.Context, userID string) ([]URLP
 	for _, link := range m.data {
 		if link.UserID == userID && !link.IsDeleted {
 			pairs = append(pairs, URLPair{
-				ShortURL:    link.ShortUrl,
-				OriginalURL: link.OriginalUrl,
+				ShortURL:    link.ShortURL,
+				OriginalURL: link.OriginalURL,
 			})
 		}
 	}
@@ -121,7 +122,7 @@ func (m *MemoryStorage) DeleteURLs(ctx context.Context, ids []string, userID str
 		if link, ok := m.data[id]; ok && link.UserID == userID {
 			link.IsDeleted = true
 			m.data[id] = link
-			delete(m.urlMap, link.OriginalUrl)
+			delete(m.urlMap, link.OriginalURL)
 		}
 	}
 	return nil

@@ -5,10 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
-	"go.uber.org/zap"
 )
 
 type deleteTask struct {
@@ -26,9 +27,10 @@ type Handler struct {
 	cancel        context.CancelFunc
 	batchSize     int
 	flushInterval time.Duration
+	audit         AuditPublisher
 }
 
-func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler {
+func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger, auditPub AuditPublisher) *Handler {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Handler{
 		storage:       storage,
@@ -39,6 +41,7 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger) *Handler
 		cancel:        cancel,
 		batchSize:     100,             // размер батча
 		flushInterval: 5 * time.Second, // интервал принудительного сброса
+		audit:         auditPub,
 	}
 	h.wg.Add(1)
 	go h.deleteWorker()
