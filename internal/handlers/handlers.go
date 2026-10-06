@@ -73,7 +73,7 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.audit.Publish(r.Context(), audit.Event{
+	h.audit.Publish(audit.Event{
 		TS:     time.Now().Unix(),
 		Action: audit.ActionShorten,
 		UserID: userID,
@@ -121,7 +121,7 @@ func (h *Handler) GetLink(w http.ResponseWriter, r *http.Request) {
 	if v := r.Context().Value(user.UserIDContextKey); v != nil {
 		userID, _ = v.(string)
 	}
-	h.audit.Publish(r.Context(), audit.Event{
+	h.audit.Publish(audit.Event{
 		TS:     time.Now().Unix(),
 		Action: audit.ActionFollow,
 		UserID: userID,
@@ -177,7 +177,7 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.audit.Publish(r.Context(), audit.Event{
+	h.audit.Publish(audit.Event{
 		TS:     time.Now().Unix(),
 		Action: audit.ActionShorten,
 		UserID: userID,
@@ -267,7 +267,7 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, item := range reqItems {
-		h.audit.Publish(r.Context(), audit.Event{
+		h.audit.Publish(audit.Event{
 			TS:     time.Now().Unix(),
 			Action: audit.ActionShorten,
 			UserID: userID,

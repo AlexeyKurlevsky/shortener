@@ -24,7 +24,7 @@ func (d dummyPinger) Ping(ctx context.Context) error { return nil }
 
 type nopPublisher struct{}
 
-func (nopPublisher) Publish(context.Context, audit.Event) {}
+func (nopPublisher) Publish(audit.Event) {}
 
 func TestRouter(t *testing.T) {
 	secret := make([]byte, 32)

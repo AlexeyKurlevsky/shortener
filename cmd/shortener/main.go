@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
-	_ "net/http/pprof"
-
-	"go.uber.org/zap"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
@@ -15,6 +17,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -26,17 +29,17 @@ func main() {
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
-	defer logger.Sync()
 
 	// ---- Аудит ----
-	// Publisher запускаем с context.Background():
 	auditPublisher := audit.NewPublisher(2048)
 
+	var fileObs *audit.FileObserver
 	if cfg.AuditFile != "" {
-		fileObs, err := audit.NewFileObserver(cfg.AuditFile)
+		fo, err := audit.NewFileObserver(cfg.AuditFile)
 		if err != nil {
 			logger.Log.Fatal("Failed to init audit file", zap.Error(err))
 		}
+		fileObs = fo
 		auditPublisher.Subscribe(fileObs)
 		logger.Log.Info("Audit: file observer enabled", zap.String("path", cfg.AuditFile))
 	}
@@ -46,7 +49,7 @@ func main() {
 		logger.Log.Info("Audit: http observer enabled", zap.String("url", cfg.AuditURL))
 	}
 
-	auditPublisher.Start(context.Background())
+	auditPublisher.Start()
 
 	// ---- Storage ----
 	var st storage.Storage
@@ -73,6 +76,7 @@ func main() {
 		st = storage.NewMemoryStorage()
 	}
 
+	// ---- Handlers + Router ----
 	h := handlers.NewHandler(st, cfg, pinger, auditPublisher)
 	userSvc := user.NewUserService(cfg)
 	r := server.NewRouter(h, userSvc)
@@ -85,7 +89,57 @@ func main() {
 		zap.String("AuditURL", cfg.AuditURL),
 	)
 
-	if err := http.ListenAndServe(cfg.ServerAddr, r); err != nil {
-		logger.Log.Fatal("Server failed: %v", zap.Error(err))
+	// ---- Сервер ----
+	srv := &http.Server{Addr: cfg.ServerAddr, Handler: r}
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- srv.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			logger.Log.Fatal("Server failed", zap.Error(err))
+		}
+	case sig := <-stop:
+		logger.Log.Info("Signal received, shutting down",
+			zap.String("signal", sig.String()))
+	}
+
+	// Всё завершение выполняется в отдельной горутине, а main
+	// ограничивает его по времени. Даже при полном ступоре внутри
+	// процесс выйдет через 5 секунд.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer shutCancel()
+
+		if err := srv.Shutdown(shutCtx); err != nil {
+			logger.Log.Warn("HTTP shutdown failed, forcing close", zap.Error(err))
+			_ = srv.Close()
+		}
+		logger.Log.Info("HTTP server stopped")
+
+		auditPublisher.Close() // дожидается обработки остатка очереди
+		logger.Log.Info("Audit publisher closed")
+
+		if fileObs != nil {
+			if err := fileObs.Close(); err != nil {
+				logger.Log.Error("Audit file close failed", zap.Error(err))
+			}
+		}
+		logger.Log.Info("Bye")
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		logger.Log.Warn("Shutdown timeout exceeded, exiting anyway")
 	}
 }

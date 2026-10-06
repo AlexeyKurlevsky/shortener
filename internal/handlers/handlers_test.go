@@ -29,15 +29,14 @@ import (
 // nopPublisher — для тестов, где события аудита не важны.
 type nopPublisher struct{}
 
-func (nopPublisher) Publish(context.Context, audit.Event) {}
+func (nopPublisher) Publish(audit.Event) {}
 
-// spyPublisher — собирает события в памяти для последующих проверок.
 type spyPublisher struct {
 	mu     sync.Mutex
 	events []audit.Event
 }
 
-func (s *spyPublisher) Publish(_ context.Context, e audit.Event) {
+func (s *spyPublisher) Publish(e audit.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, e)
