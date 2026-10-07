@@ -1,3 +1,4 @@
+// Package user предоставляет сервис управления пользователями.
 package user
 
 import (

@@ -26,11 +26,11 @@ func TestFileObserver_Notify(t *testing.T) {
 	}
 
 	for _, e := range events {
-		if err := obs.Notify(context.Background(), e); err != nil {
+		if err = obs.Notify(context.Background(), e); err != nil {
 			t.Fatalf("Notify: %v", err)
 		}
 	}
-	if err := obs.Close(); err != nil {
+	if err = obs.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 
@@ -73,7 +73,7 @@ func TestFileObserver_Append(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileObserver 1: %v", err)
 	}
-	if err := obs1.Notify(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "a"}); err != nil {
+	if err = obs1.Notify(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "a"}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	_ = obs1.Close()
@@ -83,7 +83,7 @@ func TestFileObserver_Append(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFileObserver 2: %v", err)
 	}
-	if err := obs2.Notify(context.Background(), Event{TS: 2, Action: ActionFollow, URL: "b"}); err != nil {
+	if err = obs2.Notify(context.Background(), Event{TS: 2, Action: ActionFollow, URL: "b"}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	_ = obs2.Close()
