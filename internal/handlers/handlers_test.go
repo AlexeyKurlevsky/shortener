@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -28,15 +29,14 @@ import (
 // nopPublisher — для тестов, где события аудита не важны.
 type nopPublisher struct{}
 
-func (nopPublisher) Publish(context.Context, audit.Event) {}
+func (nopPublisher) Publish(audit.Event) {}
 
-// spyPublisher — собирает события в памяти для последующих проверок.
 type spyPublisher struct {
 	mu     sync.Mutex
 	events []audit.Event
 }
 
-func (s *spyPublisher) Publish(_ context.Context, e audit.Event) {
+func (s *spyPublisher) Publish(e audit.Event) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.events = append(s.events, e)
@@ -646,4 +646,308 @@ func TestAuditNotPublishedOnFailure(t *testing.T) {
 			t.Errorf("expected 0 audit events on 404, got %d", got)
 		}
 	})
+}
+
+// ------------------------------------------------------------
+// Примеры (Examples)
+// ------------------------------------------------------------
+
+// Example демонстрирует базовый сценарий работы пакета:
+// сокращение URL и последующий редирект по короткому идентификатору.
+func Example() {
+	mock := &mockStorage{
+		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		existsFunc:      func(ctx context.Context, id string) bool { return false },
+		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	}
+	h := setupTest(mock)
+
+	// 1. Создаём короткую ссылку.
+	createReq := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://example.com"))
+	createReq = setUserContext(createReq, testUserID)
+	createRec := httptest.NewRecorder()
+	h.CreateShortURL(createRec, createReq)
+
+	fmt.Println("create status:", createRec.Code)
+	fmt.Println("prefix ok:", strings.HasPrefix(createRec.Body.String(), "http://localhost:8080/"))
+	// Output:
+	// create status: 201
+	// prefix ok: true
+}
+
+// ExampleIsValidURL показывает, какие строки считаются корректными URL.
+func ExampleIsValidURL() {
+	fmt.Println(IsValidURL("https://example.com"))
+	fmt.Println(IsValidURL("http://localhost:8080/path?q=1"))
+	fmt.Println(IsValidURL("ftp://example.com"))
+	fmt.Println(IsValidURL("not-a-url"))
+	// Output:
+	// true
+	// true
+	// false
+	// false
+}
+
+// ExampleHandler_CreateShortURL показывает сокращение URL, пришедшего
+// в теле запроса как text/plain.
+func ExampleHandler_CreateShortURL() {
+	mock := &mockStorage{
+		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		existsFunc:      func(ctx context.Context, id string) bool { return false },
+		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://example.com"))
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.CreateShortURL(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("content-type:", rec.Header().Get("Content-Type"))
+	fmt.Println("prefix ok:", strings.HasPrefix(rec.Body.String(), "http://localhost:8080/"))
+	// Output:
+	// status: 201
+	// content-type: text/plain
+	// prefix ok: true
+}
+
+// ExampleHandler_CreateShortURL_conflict показывает обработку дубликата:
+// если URL уже сохранён, возвращается 409 Conflict и существующая ссылка.
+func ExampleHandler_CreateShortURL_conflict() {
+	mock := &mockStorage{
+		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) {
+			return "abc123", true
+		},
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://example.com"))
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.CreateShortURL(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("body:", rec.Body.String())
+	// Output:
+	// status: 409
+	// body: http://localhost:8080/abc123
+}
+
+// ExampleHandler_CreateShortURLJson показывает сокращение URL из JSON-запроса.
+func ExampleHandler_CreateShortURLJson() {
+	mock := &mockStorage{
+		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		existsFunc:      func(ctx context.Context, id string) bool { return false },
+		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	}
+	h := setupTest(mock)
+
+	body := strings.NewReader(`{"url":"https://example.com/api/shorten"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/shorten", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.CreateShortURLJson(rec, req)
+
+	var resp models.ShortURLResponse
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("content-type:", rec.Header().Get("Content-Type"))
+	fmt.Println("prefix ok:", strings.HasPrefix(resp.Result, "http://localhost:8080/"))
+	// Output:
+	// status: 201
+	// content-type: application/json
+	// prefix ok: true
+}
+
+// ExampleHandler_GetLink показывает редирект по короткому идентификатору.
+func ExampleHandler_GetLink() {
+	mock := &mockStorage{
+		getFunc: func(ctx context.Context, id string) (string, error) {
+			return "https://example.com/target", nil
+		},
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/abc123", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "abc123")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.GetLink(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("location:", rec.Header().Get("Location"))
+	// Output:
+	// status: 307
+	// location: https://example.com/target
+}
+
+// ExampleHandler_GetLink_notFound показывает ответ 404 для неизвестного id.
+func ExampleHandler_GetLink_notFound() {
+	mock := &mockStorage{
+		getFunc: func(ctx context.Context, id string) (string, error) {
+			return "", storage.ErrNotFound
+		},
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", "missing")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.GetLink(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	// Output:
+	// status: 404
+}
+
+// ExampleHandler_PingHandler показывает успешную проверку БД.
+func ExampleHandler_PingHandler() {
+	mock := &mockStorage{}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	rec := httptest.NewRecorder()
+
+	h.PingHandler(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("body:", rec.Body.String())
+	// Output:
+	// status: 200
+	// body: OK
+}
+
+// ExampleHandler_PingHandler_failure показывает ответ 500 при недоступной БД.
+func ExampleHandler_PingHandler_failure() {
+	mock := &mockStorage{}
+	cfg := &config.Config{ServerAddr: ":8080", BaseURL: "http://localhost:8080"}
+	badPinger := mockPinger{
+		pingFunc: func(ctx context.Context) error { return errors.New("connection refused") },
+	}
+	h := NewHandler(mock, cfg, badPinger, nopPublisher{})
+
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	rec := httptest.NewRecorder()
+
+	h.PingHandler(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	// Output:
+	// status: 500
+}
+
+// ExampleHandler_GetUserURLs показывает список ссылок пользователя.
+func ExampleHandler_GetUserURLs() {
+	mock := &mockStorage{
+		getAllByUserFunc: func(ctx context.Context, userID string) ([]storage.URLPair, error) {
+			return []storage.URLPair{
+				{ShortURL: "aaa111", OriginalURL: "https://example.com/a"},
+			}, nil
+		},
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.GetUserURLs(rec, req)
+
+	var resp []models.URLPair
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("items:", len(resp))
+	fmt.Println("short:", resp[0].ShortURL)
+	fmt.Println("original:", resp[0].OriginalURL)
+	// Output:
+	// status: 200
+	// items: 1
+	// short: http://localhost:8080/aaa111
+	// original: https://example.com/a
+}
+
+// ExampleHandler_GetUserURLs_empty показывает 204 No Content,
+// если у пользователя нет ссылок.
+func ExampleHandler_GetUserURLs_empty() {
+	mock := &mockStorage{
+		getAllByUserFunc: func(ctx context.Context, userID string) ([]storage.URLPair, error) {
+			return nil, nil
+		},
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.GetUserURLs(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	// Output:
+	// status: 204
+}
+
+// ExampleHandler_BatchCreateShortURL показывает пакетное сокращение URL.
+func ExampleHandler_BatchCreateShortURL() {
+	mock := &mockStorage{
+		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		existsFunc:      func(ctx context.Context, id string) bool { return false },
+		batchSaveFunc:   func(ctx context.Context, items []storage.BatchItem, userID string) error { return nil },
+	}
+	h := setupTest(mock)
+
+	body := strings.NewReader(`[
+		{"correlation_id":"a","original_url":"https://example.com/1"},
+		{"correlation_id":"b","original_url":"https://example.com/2"}
+	]`)
+	req := httptest.NewRequest(http.MethodPost, "/api/shorten/batch", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.BatchCreateShortURL(rec, req)
+
+	var resp []models.BatchResponseItem
+	_ = json.NewDecoder(rec.Body).Decode(&resp)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("items:", len(resp))
+	fmt.Println("first correlation_id:", resp[0].CorrelationID)
+	fmt.Println("first prefix ok:", strings.HasPrefix(resp[0].ShortURL, "http://localhost:8080/"))
+	// Output:
+	// status: 201
+	// items: 2
+	// first correlation_id: a
+	// first prefix ok: true
+}
+
+// ExampleHandler_DeleteUserURLs показывает асинхронную постановку задач
+// на удаление: обработчик возвращает 202 Accepted.
+func ExampleHandler_DeleteUserURLs() {
+	mock := &mockStorage{}
+	h := setupTest(mock)
+
+	body := strings.NewReader(`["aaa111","bbb222"]`)
+	req := httptest.NewRequest(http.MethodDelete, "/api/user/urls", body)
+	req.Header.Set("Content-Type", "application/json")
+	req = setUserContext(req, testUserID)
+	rec := httptest.NewRecorder()
+
+	h.DeleteUserURLs(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	// Output:
+	// status: 202
 }

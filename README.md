@@ -74,3 +74,62 @@ git fetch template && git checkout template/v2 .github
 
 - `compress/flate.NewWriter` (655 kB) — `gzip.Writer` создаётся на каждый запрос, кандидат на `sync.Pool`.
 - `handlers.NewHandler` (528 kB) — надо проверить, что вызывается один раз.
+
+
+```
+File: main
+Build ID: 681bd648625097cffbb8fd1708857384c3b0c31d
+Type: inuse_space
+Time: 2026-09-28 22:30:33 MSK
+Showing nodes accounting for -1178.75kB, 23.93% of 4925.47kB total
+      flat  flat%   sum%        cum   cum%
+-1024.11kB 20.79% 20.79% -1024.11kB 20.79%  github.com/jackc/pgconn/internal/ctxwatch.(*ContextWatcher).Watch.func1
+ -768.26kB 15.60% 36.39%  -768.26kB 15.60%  go.uber.org/zap/zapcore.newCounters (inline)
+  655.29kB 13.30% 23.09%   655.29kB 13.30%  compress/flate.NewWriter (inline)
+ -570.04kB 11.57% 34.66%  -570.04kB 11.57%  github.com/AlexeyKurlevsky/shortener/internal/audit.NewPublisher (inline)
+  528.17kB 10.72% 23.94%   528.17kB 10.72%  github.com/AlexeyKurlevsky/shortener/internal/handlers.NewHandler
+  512.20kB 10.40% 13.54%   512.20kB 10.40%  github.com/jackc/pgx/v5/pgtype.(*Map).planEncodeDepth
+ -512.01kB 10.40% 23.93%  -512.01kB 10.40%  runtime.mallocgcSmallScanNoHeaderSC2
+         0     0% 23.93%   655.29kB 13.30%  compress/gzip.(*Writer).Close
+         0     0% 23.93%   655.29kB 13.30%  compress/gzip.(*Writer).Write
+         0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/handlers.(*Handler).CreateShortURL
+         0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/handlers.handleShorten
+         0     0% 23.93%  -768.26kB 15.60%  github.com/AlexeyKurlevsky/shortener/internal/logger.Initialize
+         0     0% 23.93%   655.29kB 13.30%  github.com/AlexeyKurlevsky/shortener/internal/middleware.(*compressWriter).Close
+         0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/middleware.AuthMiddleware.func1.1
+         0     0% 23.93%  1167.50kB 23.70%  github.com/AlexeyKurlevsky/shortener/internal/middleware.GzipMiddleware.func1
+         0     0% 23.93%  1167.50kB 23.70%  github.com/AlexeyKurlevsky/shortener/internal/middleware.RequestLogger.func1
+         0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/storage.(*PostgresStorage).FindIDByURL
+         0     0% 23.93%  1167.50kB 23.70%  github.com/go-chi/chi/v5.(*Mux).ServeHTTP
+         0     0% 23.93%   512.20kB 10.40%  github.com/go-chi/chi/v5.(*Mux).routeHTTP
+         0     0% 23.93%  1167.50kB 23.70%  github.com/go-chi/chi/v5/middleware.Recoverer.func1
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5.(*Conn).Query
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5.(*Conn).QueryRow (inline)
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5.(*ExtendedQueryBuilder).Build
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5.(*ExtendedQueryBuilder).appendParam
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5.(*ExtendedQueryBuilder).encodeExtendedParamValue
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5/pgtype.(*Map).Encode
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5/pgtype.(*Map).PlanEncode (inline)
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5/pgxpool.(*Conn).QueryRow
+         0     0% 23.93%   512.20kB 10.40%  github.com/jackc/pgx/v5/pgxpool.(*Pool).QueryRow
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap.(*Logger).WithOptions
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap.Config.Build
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap.Config.buildOptions.func1
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap.New
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap.WrapCore.func1
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap.optionFunc.apply
+         0     0% 23.93%  -768.26kB 15.60%  go.uber.org/zap/zapcore.NewSamplerWithOptions
+         0     0% 23.93%  -810.13kB 16.45%  main.main
+         0     0% 23.93%  1167.50kB 23.70%  net/http.(*conn).serve
+         0     0% 23.93%  1167.50kB 23.70%  net/http.HandlerFunc.ServeHTTP
+         0     0% 23.93%  1167.50kB 23.70%  net/http.serverHandler.ServeHTTP
+         0     0% 23.93%  -512.01kB 10.40%  runtime.(*scavengerState).sleep
+         0     0% 23.93%  -512.01kB 10.40%  runtime.(*timer).maybeAdd
+         0     0% 23.93%  -512.01kB 10.40%  runtime.(*timer).modify
+         0     0% 23.93%  -512.01kB 10.40%  runtime.(*timer).reset (inline)
+         0     0% 23.93%  -512.01kB 10.40%  runtime.(*timers).addHeap
+         0     0% 23.93%  -512.01kB 10.40%  runtime.bgscavenge
+         0     0% 23.93%  -512.01kB 10.40%  runtime.growslice
+         0     0% 23.93%  -810.13kB 16.45%  runtime.main
+         0     0% 23.93%  -512.01kB 10.40%  runtime.mallocgc
+```

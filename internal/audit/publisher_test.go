@@ -51,25 +51,23 @@ func (o *panickingObserver) Notify(_ context.Context, _ Event) error {
 }
 
 func TestPublisher_DeliversToAllObservers(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	pub := NewPublisher(16)
+	defer pub.Close()
+
 	obs1 := &recordingObserver{}
 	obs2 := &recordingObserver{}
 	pub.Subscribe(obs1)
 	pub.Subscribe(obs2)
-	pub.Start(ctx)
+	pub.Start()
 
 	want := []Event{
 		{TS: 1, Action: ActionShorten, URL: "a"},
 		{TS: 2, Action: ActionFollow, URL: "b"},
 	}
 	for _, e := range want {
-		pub.Publish(context.Background(), e)
+		pub.Publish(e)
 	}
 
-	// Ждём доставки всем наблюдателям (короткое окно + поллинг).
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(obs1.snapshot()) == len(want) && len(obs2.snapshot()) == len(want) {
@@ -94,17 +92,16 @@ func TestPublisher_DeliversToAllObservers(t *testing.T) {
 }
 
 func TestPublisher_IsolatesObserverErrors(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	pub := NewPublisher(4)
+	defer pub.Close()
+
 	failing := &failingObserver{}
 	rec := &recordingObserver{}
 	pub.Subscribe(failing)
 	pub.Subscribe(rec)
-	pub.Start(ctx)
+	pub.Start()
 
-	pub.Publish(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "a"})
+	pub.Publish(Event{TS: 1, Action: ActionShorten, URL: "a"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -122,17 +119,16 @@ func TestPublisher_IsolatesObserverErrors(t *testing.T) {
 }
 
 func TestPublisher_RecoversFromPanic(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	pub := NewPublisher(4)
+	defer pub.Close()
+
 	panicky := &panickingObserver{}
 	rec := &recordingObserver{}
 	pub.Subscribe(panicky)
 	pub.Subscribe(rec)
-	pub.Start(ctx)
+	pub.Start()
 
-	pub.Publish(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "a"})
+	pub.Publish(Event{TS: 1, Action: ActionShorten, URL: "a"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -149,15 +145,13 @@ func TestPublisher_RecoversFromPanic(t *testing.T) {
 func TestPublisher_DropsWhenBufferFull(t *testing.T) {
 	// Start НЕ вызываем — воркер не вычитывает канал, буфер переполняется.
 	pub := NewPublisher(1)
-	slow := &recordingObserver{}
-	pub.Subscribe(slow)
 
 	// Заполняем буфер (1) и отправляем ещё несколько — лишние должны быть
 	// отброшены без блокировки вызывающего.
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 100; i++ {
-			pub.Publish(context.Background(), Event{TS: int64(i), Action: ActionShorten, URL: "u"})
+			pub.Publish(Event{TS: int64(i), Action: ActionShorten, URL: "u"})
 		}
 		close(done)
 	}()
@@ -169,10 +163,11 @@ func TestPublisher_DropsWhenBufferFull(t *testing.T) {
 		t.Fatal("Publish blocked on full buffer")
 	}
 
-	// Start запускаем после — события из буфера всё же доедут.
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	pub.Start(ctx)
+	// Теперь стартуем воркер — события, успевшие попасть в буфер, доедут.
+	slow := &recordingObserver{}
+	pub.Subscribe(slow)
+	pub.Start()
+	defer pub.Close()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -181,48 +176,42 @@ func TestPublisher_DropsWhenBufferFull(t *testing.T) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	// Точное число не проверяем — нам важен факт отсутствия блокировки и доставки.
 	if got := len(slow.snapshot()); got == 0 {
 		t.Error("expected at least one event to be delivered")
 	}
 }
 
-func TestPublisher_PublishCanceledContext(t *testing.T) {
-	// Start не вызываем, буфер полон → Publish с отменённым ctx должен выйти без блокировки.
+// TestPublisher_PublishNonBlockingWhenFull — замена TestPublisher_PublishCanceledContext.
+// Проверяет, что Publish не блокируется при полном буфере и отсутствии воркера.
+func TestPublisher_PublishNonBlockingWhenFull(t *testing.T) {
 	pub := NewPublisher(1)
-	pub.Publish(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "u"}) // занимает единственный слот
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	pub.Publish(Event{TS: 1, Action: ActionShorten, URL: "u"}) // занимает единственный слот
 
 	done := make(chan struct{})
 	go func() {
-		pub.Publish(ctx, Event{TS: 2, Action: ActionFollow, URL: "u"})
+		pub.Publish(Event{TS: 2, Action: ActionFollow, URL: "u"}) // должен отброситься
 		close(done)
 	}()
 	select {
 	case <-done:
 	case <-time.After(500 * time.Millisecond):
-		t.Fatal("Publish with canceled ctx blocked")
+		t.Fatal("Publish blocked on full buffer")
 	}
 }
 
 func TestPublisher_CloseDrainsQueue(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	pub := NewPublisher(64)
 	rec := &recordingObserver{}
 	pub.Subscribe(rec)
-	pub.Start(ctx)
+	pub.Start()
 
 	const total = 50
 	for i := 0; i < total; i++ {
-		pub.Publish(context.Background(), Event{TS: int64(i), Action: ActionShorten, URL: "u"})
+		pub.Publish(Event{TS: int64(i), Action: ActionShorten, URL: "u"})
 	}
 
-	// Close должен дождаться, пока воркер вычитает оставшиеся события
-	// (ветка <-ctx.Done() внутри Start тоже дренирует очередь).
+	// Close должен дождаться, пока воркер вычитает оставшиеся события:
+	// cancel() → воркер видит ctx.Done() → drain() выгребает буфер → wg.Wait().
 	pub.Close()
 
 	if got := len(rec.snapshot()); got != total {
@@ -231,16 +220,14 @@ func TestPublisher_CloseDrainsQueue(t *testing.T) {
 }
 
 func TestPublisher_SubscribeAfterStart(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
 	pub := NewPublisher(8)
-	pub.Start(ctx)
+	defer pub.Close()
+	pub.Start()
 
 	rec := &recordingObserver{}
 	pub.Subscribe(rec) // подписка после старта тоже должна работать
 
-	pub.Publish(context.Background(), Event{TS: 1, Action: ActionShorten, URL: "a"})
+	pub.Publish(Event{TS: 1, Action: ActionShorten, URL: "a"})
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

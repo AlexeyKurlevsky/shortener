@@ -4,19 +4,19 @@ import (
 	"context"
 	"sync"
 
-	"go.uber.org/zap"
-
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
+	"go.uber.org/zap"
 )
 
-// Publisher — издатель событий аудита.
-// Обработчики вызывают Publish, наблюдатели подписываются через Subscribe.
 type Publisher struct {
 	mu        sync.RWMutex
 	observers []Observer
 
 	ch chan Event
 	wg sync.WaitGroup
+
+	cancel context.CancelFunc
+	once   sync.Once
 }
 
 func NewPublisher(buffer int) *Publisher {
@@ -32,49 +32,57 @@ func (p *Publisher) Subscribe(o Observer) {
 	p.mu.Unlock()
 }
 
-// Start запускает воркер, разгребающий очередь событий.
-func (p *Publisher) Start(ctx context.Context) {
+// Start запускает воркер. Воркер живёт до Close().
+func (p *Publisher) Start() {
+	ctx, cancel := context.WithCancel(context.Background())
+	p.cancel = cancel
+
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
-				// Сливаем остаток очереди и выходим.
-				for {
-					select {
-					case e := <-p.ch:
-						p.dispatch(e)
-					default:
-						return
-					}
-				}
-			case e, ok := <-p.ch:
-				if !ok {
-					return
-				}
+				p.drain()
+				return
+			case e := <-p.ch:
 				p.dispatch(e)
 			}
 		}
 	}()
 }
 
-// Publish не блокирует вызывающего.
-func (p *Publisher) Publish(ctx context.Context, e Event) {
+// Publish не блокирует вызывающего. При переполнении буфера событие теряется.
+func (p *Publisher) Publish(e Event) {
 	select {
 	case p.ch <- e:
-	case <-ctx.Done():
-		logger.Log.Warn("audit publish canceled", zap.Error(ctx.Err()))
 	default:
 		logger.Log.Warn("audit buffer full, event dropped",
 			zap.String("action", string(e.Action)))
 	}
 }
 
-// Close корректно останавливает воркер.
+// Close останавливает воркер: сигналит о завершении, дожидается обработки
+// остатка очереди и возвращается. Идемпотентен.
 func (p *Publisher) Close() {
-	close(p.ch)
+	p.once.Do(func() {
+		if p.cancel != nil {
+			p.cancel()
+		}
+	})
 	p.wg.Wait()
+}
+
+// drain вычитывает остаток буфера после сигнала о завершении.
+func (p *Publisher) drain() {
+	for {
+		select {
+		case e := <-p.ch:
+			p.dispatch(e)
+		default:
+			return
+		}
+	}
 }
 
 func (p *Publisher) dispatch(e Event) {
