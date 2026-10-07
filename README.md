@@ -42,3 +42,35 @@ git fetch template && git checkout template/v2 .github
 - **Clean Architecture**
 - **Hexagonal Architecture**
 - **Layered Architecture**
+
+## Профилирование памяти
+
+Я профилировал heap через `pprof` (`/debug/pprof/heap`) и снизил потребление в покое с **~4.9 MB до ~3.7 MB**, а также убрал несколько источников роста под нагрузкой.
+
+### Что я сделал
+
+**Storage**
+- Перешёл с `database/sql` + stdlib-обёртки на `pgxpool` — убрал лишний слой prepare/exec и связанные аллокации (`ctxwatch`).
+- Ограничил пул соединений
+- Вынес миграции `golang-migrate` в отдельную функцию с обязательным `defer m.Close()` — убрал висящую горутину lock.
+- Переписал `BatchSave` через `pgx.Batch` — один round-trip на весь батч вместо N отдельных `Exec`.
+- Закрываю `*sql.DB` / `pool` во всех ветках ошибок инициализации.
+
+**Logger**
+- Отключил sampling (`cfg.Sampling = nil`) — убрал `zapcore.newCounters` из профиля.
+- Сделал `Initialize` идемпотентным через `sync.Once` — логгер создаётся один раз.
+- Добавил `Sync()` для сброса буферов при shutdown.
+
+### Результат
+
+| Метрика | До | После |
+|---|---|---|
+| `inuse_space` в покое | 4.9 MB | 3.7 MB |
+| `zapcore.newCounters` | 768 kB | 0 |
+| `ctxwatch.Watch.func1` | 1024 kB | 0 |
+| `migrate.(*Migrate).lock.func2` | 512 kB | 0 |
+
+### Что оставил на будущее
+
+- `compress/flate.NewWriter` (655 kB) — `gzip.Writer` создаётся на каждый запрос, кандидат на `sync.Pool`.
+- `handlers.NewHandler` (528 kB) — надо проверить, что вызывается один раз.

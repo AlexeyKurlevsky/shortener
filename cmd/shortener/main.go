@@ -4,6 +4,7 @@ import (
 	"context"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
@@ -24,6 +25,7 @@ func main() {
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
 		log.Fatalf("Failed to initialize logger: %v", err)
 	}
+	defer logger.Sync()
 
 	// ---- Аудит ----
 	// Publisher запускаем с context.Background():
@@ -50,7 +52,7 @@ func main() {
 	var pinger handlers.Pinger
 
 	if cfg.DatabaseDSN != "" {
-		pgStore, err := storage.NewPostgresStorage(cfg.DatabaseDSN)
+		pgStore, err := storage.NewPostgresStorage(context.Background(), cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal("Failed to init PostgreSQL storage", zap.Error(err))
 		}
