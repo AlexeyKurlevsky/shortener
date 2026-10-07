@@ -9,12 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
-	"github.com/stretchr/testify/assert"
 )
 
 type dummyPinger struct{}

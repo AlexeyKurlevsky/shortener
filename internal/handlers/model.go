@@ -5,10 +5,11 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
-	"go.uber.org/zap"
 )
 
 type deleteTask struct {

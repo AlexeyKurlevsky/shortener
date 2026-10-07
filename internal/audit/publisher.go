@@ -4,8 +4,9 @@ import (
 	"context"
 	"sync"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"go.uber.org/zap"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 )
 
 // Publisher — издатель событий аудита.

@@ -24,3 +24,6 @@ pprof_top:
 
 bench_test:
 	go test -bench=. -benchmem ./internal/handlers
+
+lint_imports:
+	goimports -local "github.com/AlexeyKurlevsky/shortener" -w .

@@ -12,12 +12,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
-	"github.com/go-chi/chi/v5"
 )
 
 // ------------------------------------------------------------

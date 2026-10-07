@@ -7,8 +7,9 @@ import (
 	"os"
 	"sync"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/google/uuid"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/models"
 )
 
 type JSONStorage struct {

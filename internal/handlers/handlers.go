@@ -9,13 +9,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
+
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
-	"github.com/go-chi/chi/v5"
-	"go.uber.org/zap"
 )
 
 type Pinger interface {

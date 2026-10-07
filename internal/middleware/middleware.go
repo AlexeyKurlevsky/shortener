@@ -5,8 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"go.uber.org/zap"
+
+	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 )
 
 func GzipMiddleware(next http.Handler) http.Handler {
