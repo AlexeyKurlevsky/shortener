@@ -1,3 +1,5 @@
+// Package middleware содержит HTTP-middleware: аутентификацию, gzip
+// и общие вспомогательные обёртки.
 package middleware
 
 import (
