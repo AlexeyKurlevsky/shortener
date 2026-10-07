@@ -71,8 +71,8 @@ func handleShorten(ctx context.Context, url string, store storage.Storage, userI
 		return result, newStorageSaveError()
 	}
 
-	result.OriginalUrl = url
-	result.ShortUrl = shortURL
+	result.OriginalURL = url
+	result.ShortURL = shortURL
 	result.IsNew = true
 	return result, nil
 }

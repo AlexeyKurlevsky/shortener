@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/handlers"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
@@ -19,6 +20,10 @@ import (
 type dummyPinger struct{}
 
 func (d dummyPinger) Ping(ctx context.Context) error { return nil }
+
+type nopPublisher struct{}
+
+func (nopPublisher) Publish(context.Context, audit.Event) {}
 
 func TestRouter(t *testing.T) {
 	secret := make([]byte, 32)
@@ -32,7 +37,7 @@ func TestRouter(t *testing.T) {
 	}
 
 	st := storage.NewMemoryStorage()
-	h := handlers.NewHandler(st, cfg, dummyPinger{})
+	h := handlers.NewHandler(st, cfg, dummyPinger{}, nopPublisher{})
 	userSvc := user.NewUserService(cfg)
 	router := NewRouter(h, userSvc)
 

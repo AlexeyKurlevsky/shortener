@@ -35,13 +35,13 @@ func (j *JSONStorage) Save(ctx context.Context, id, url, userID string) error {
 	defer j.mu.Unlock()
 	// Если запись с таким id уже существует, удаляем старую из urlMap
 	if oldLink, ok := j.data[id]; ok {
-		delete(j.urlMap, oldLink.OriginalUrl)
+		delete(j.urlMap, oldLink.OriginalURL)
 	}
 	link := models.StorageLink{
-		Uuid: uuid.New().String(),
+		UUID: uuid.New().String(),
 		ShortenLink: models.ShortenLink{
-			ShortUrl:    id,
-			OriginalUrl: url,
+			ShortURL:    id,
+			OriginalURL: url,
 		},
 		UserID:    userID,
 		IsDeleted: false, // новая запись активна
@@ -61,7 +61,7 @@ func (j *JSONStorage) Get(ctx context.Context, id string) (string, error) {
 	if link.IsDeleted {
 		return "", ErrGone
 	}
-	return link.OriginalUrl, nil
+	return link.OriginalURL, nil
 }
 
 func (j *JSONStorage) Exists(ctx context.Context, id string) bool {
@@ -101,10 +101,10 @@ func (j *JSONStorage) Load(ctx context.Context) error {
 		j.data = make(map[string]models.StorageLink)
 		j.urlMap = make(map[string]string)
 		for _, link := range links {
-			j.data[link.ShortUrl] = link
+			j.data[link.ShortURL] = link
 			// Добавляем в urlMap только активные записи (для поиска)
 			if !link.IsDeleted {
-				j.urlMap[link.OriginalUrl] = link.ShortUrl
+				j.urlMap[link.OriginalURL] = link.ShortURL
 			}
 		}
 		return nil
@@ -141,10 +141,10 @@ func (j *JSONStorage) BatchSave(ctx context.Context, items []BatchItem, userID s
 	defer j.mu.Unlock()
 	for _, item := range items {
 		link := models.StorageLink{
-			Uuid: uuid.New().String(),
+			UUID: uuid.New().String(),
 			ShortenLink: models.ShortenLink{
-				ShortUrl:    item.ID,
-				OriginalUrl: item.URL,
+				ShortURL:    item.ID,
+				OriginalURL: item.URL,
 			},
 			UserID:    userID,
 			IsDeleted: false,
@@ -162,8 +162,8 @@ func (j *JSONStorage) GetAllByUser(ctx context.Context, userID string) ([]URLPai
 	for _, link := range j.data {
 		if link.UserID == userID && !link.IsDeleted {
 			pairs = append(pairs, URLPair{
-				ShortURL:    link.ShortUrl,
-				OriginalURL: link.OriginalUrl,
+				ShortURL:    link.ShortURL,
+				OriginalURL: link.OriginalURL,
 			})
 		}
 	}
@@ -179,7 +179,7 @@ func (j *JSONStorage) DeleteURLs(ctx context.Context, ids []string, userID strin
 			link.IsDeleted = true
 			j.data[id] = link
 			// Удаляем из urlMap, чтобы FindIDByURL больше не находил этот URL
-			delete(j.urlMap, link.OriginalUrl)
+			delete(j.urlMap, link.OriginalURL)
 		}
 	}
 	return j.saveToFile(ctx)

@@ -11,10 +11,10 @@ import (
 
 func GzipMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		content_type := r.Header.Get("Content-Type")
+		contentType := r.Header.Get("Content-Type")
 		ow := w
 
-		if content_type == "application/json" || content_type == "text/html" || content_type == "text/plain" {
+		if contentType == "application/json" || contentType == "text/html" || contentType == "text/plain" {
 
 			acceptEncoding := r.Header.Get("Accept-Encoding")
 			supportsGzip := strings.Contains(acceptEncoding, "gzip")
