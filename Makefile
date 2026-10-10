@@ -39,3 +39,6 @@ doc:
 
 doc_web:
 	pkgsite -http=:8888
+
+generate:
+	go run ./cmd/reset .
