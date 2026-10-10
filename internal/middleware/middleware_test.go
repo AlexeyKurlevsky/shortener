@@ -208,7 +208,7 @@ func TestGzipMiddleware_JSONRequestGzipResponse(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	gw := gzip.NewWriter(buf)
-	if _, err := gw.Write(jsonBytes); err != nil {
+	if _, err = gw.Write(jsonBytes); err != nil {
 		t.Fatalf("failed to write gzip: %v", err)
 	}
 	gw.Close()
@@ -252,7 +252,7 @@ func TestGzipMiddleware_JSONRequestNoGzipResponse(t *testing.T) {
 
 	buf := new(bytes.Buffer)
 	gw := gzip.NewWriter(buf)
-	if _, err := gw.Write(jsonBytes); err != nil {
+	if _, err = gw.Write(jsonBytes); err != nil {
 		t.Fatalf("failed to write gzip: %v", err)
 	}
 	gw.Close()
