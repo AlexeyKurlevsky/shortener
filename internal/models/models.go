@@ -1,3 +1,4 @@
+// Package models описывает доменные модели приложения shortener.
 package models
 
 import (

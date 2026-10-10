@@ -82,11 +82,15 @@ func testStorage(t *testing.T, s Storage) {
 		err = js.Save(context.Background(), "def", "https://def.com", testUserID)
 		assert.NoError(t, err)
 
-		s2, err := NewJSONStorage(js.filePath)
+		var s2 *JSONStorage
+		s2, err = NewJSONStorage(js.filePath)
 		assert.NoError(t, err)
-		val2, err := s2.Get(context.Background(), "def")
+
+		var val2 string
+		val2, err = s2.Get(context.Background(), "def")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://def.com", val2)
+
 		val2, err = s2.Get(context.Background(), "abc")
 		assert.NoError(t, err)
 		assert.Equal(t, "https://new.com", val2)
@@ -97,20 +101,20 @@ func testStorage(t *testing.T, s Storage) {
 			{ID: "batch1", URL: "https://batch1.com"},
 			{ID: "batch2", URL: "https://batch2.com"},
 		}
-		err := s.BatchSave(context.Background(), items, testUserID)
-		assert.NoError(t, err)
+		batchErr := s.BatchSave(context.Background(), items, testUserID)
+		assert.NoError(t, batchErr)
 
-		val, err := s.Get(context.Background(), "batch1")
-		assert.NoError(t, err)
-		assert.Equal(t, "https://batch1.com", val)
+		batchVal, getErr := s.Get(context.Background(), "batch1")
+		assert.NoError(t, getErr)
+		assert.Equal(t, "https://batch1.com", batchVal)
 
-		val, err = s.Get(context.Background(), "batch2")
-		assert.NoError(t, err)
-		assert.Equal(t, "https://batch2.com", val)
+		batchVal, getErr = s.Get(context.Background(), "batch2")
+		assert.NoError(t, getErr)
+		assert.Equal(t, "https://batch2.com", batchVal)
 
-		id, ok := s.FindIDByURL(context.Background(), "https://batch1.com")
+		batchID, ok := s.FindIDByURL(context.Background(), "https://batch1.com")
 		assert.True(t, ok)
-		assert.Equal(t, "batch1", id)
+		assert.Equal(t, "batch1", batchID)
 	})
 
 	err = s.Save(context.Background(), "abc", "https://example.com", testUserID)
