@@ -3,7 +3,7 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,14 +20,34 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
+func printBuildInfo() {
+	fmt.Printf("Build version: %s\n", orNA(buildVersion))
+	fmt.Printf("Build date: %s\n", orNA(buildDate))
+	fmt.Printf("Build commit: %s\n", orNA(buildCommit))
+}
+
+func orNA(v string) string {
+	if v == "" {
+		return "N/A"
+	}
+	return v
+}
+
 func main() {
+	printBuildInfo()
 	cfg, err := config.NewConfig()
 	if err != nil {
-		log.Fatalf("Incorrect config: %v", err)
+		logger.Log.Fatal("Incorrect config", zap.Error(err))
 	}
 
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
+		logger.Log.Fatal("Failed to initialize logger", zap.Error(err))
 	}
 
 	// ---- Аудит ----

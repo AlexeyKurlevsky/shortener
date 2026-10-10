@@ -1,3 +1,4 @@
+// Package audit реализует подсистему аудита
 package audit
 
 type Action string
