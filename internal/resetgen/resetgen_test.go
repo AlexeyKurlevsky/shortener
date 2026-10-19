@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,16 @@ func mustParse(t *testing.T, name, src string) *ast.File {
 	return f
 }
 
+func mustParseWithFset(t *testing.T, name, src string) (*ast.File, *token.FileSet) {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, name, src, parser.ParseComments)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return f, fset
+}
+
 // parseExpr парсит выражение типа (например, "[]int").
 func parseExpr(t *testing.T, s string) ast.Expr {
 	t.Helper()
@@ -43,6 +54,43 @@ func parseExpr(t *testing.T, s string) ast.Expr {
 		t.Fatal(err)
 	}
 	return e
+}
+
+// typeOf вычисляет types.Type выражения expr в пакете, определяемом decls.
+// Парсинг и Check используют один и тот же FileSet — обязательное условие.
+func typeOf(t *testing.T, expr string, decls ...string) types.Type {
+	t.Helper()
+	src := "package p\n" + strings.Join(decls, "\n")
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Uses:  make(map[*ast.Ident]types.Object),
+		Defs:  make(map[*ast.Ident]types.Object),
+	}
+	conf := types.Config{Error: func(error) {}}
+	pkg, _ := conf.Check("p", fset, []*ast.File{f}, info)
+	tv, err := types.Eval(fset, pkg, f.Pos(), expr)
+	if err != nil {
+		t.Fatalf("types.Eval(%q): %v", expr, err)
+	}
+	return tv.Type
+}
+
+// typeCheckInfo типизирует уже распарсенный файл и возвращает types.Info.
+func typeCheckInfo(t *testing.T, fset *token.FileSet, f *ast.File) *types.Info {
+	t.Helper()
+	info := &types.Info{
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Uses:  make(map[*ast.Ident]types.Object),
+		Defs:  make(map[*ast.Ident]types.Object),
+	}
+	conf := types.Config{Error: func(error) {}}
+	_, _ = conf.Check(f.Name.Name, fset, []*ast.File{f}, info)
+	return info
 }
 
 // --- hasResetComment -------------------------------------------------------
@@ -93,41 +141,103 @@ func docGroup(text string) *ast.CommentGroup {
 	return spec.Doc
 }
 
-// --- genReset --------------------------------------------------------------
+// --- genResetType ----------------------------------------------------------
 
-func TestGenReset(t *testing.T) {
+func TestGenResetType(t *testing.T) {
 	cases := []struct {
 		name  string
 		expr  string
+		decls []string
 		wants []string
 	}{
-		{"int", "int", []string{"x = 0"}},
-		{"int64", "int64", []string{"x = 0"}},
-		{"string", "string", []string{`x = ""`}},
-		{"bool", "bool", []string{"x = false"}},
-		{"slice", "[]int", []string{"x = x[:0]"}},
-		{"map", "map[string]int", []string{"clear(x)"}},
-		{"chan", "chan int", []string{"x = nil"}},
-		{"func", "func()", []string{"x = nil"}},
-		{"any", "any", []string{"x = nil"}},
-		{"указатель_на_string", "*string", []string{"x != nil", `(*x) = ""`}},
-		{"указатель_на_slice", "*[]int", []string{"x != nil", "(*x) = (*x)[:0]"}},
-		{"массив_фикс", "[4]int", []string{"for i := range x {", "x[i] = 0"}},
+		{"int", "int", nil, []string{"x = 0"}},
+		{"int64", "int64", nil, []string{"x = 0"}},
+		{"string", "string", nil, []string{`x = ""`}},
+		{"bool", "bool", nil, []string{"x = false"}},
+		{"slice", "[]int", nil, []string{"x = x[:0]"}},
+		{"map", "map[string]int", nil, []string{"clear(x)"}},
+		{"chan", "chan int", nil, []string{"x = nil"}},
+		{"func", "func()", nil, []string{"x = nil"}},
+		{"any", "any", nil, []string{"x = nil"}},
+
+		// Именованные типы над примитивами.
 		{
-			"именованный_тип", "MyStruct",
-			[]string{"any(&x).(interface{ Reset() })", "resetter.Reset()"},
+			"named_string", "UserID",
+			[]string{"type UserID string"},
+			[]string{`x = ""`},
 		},
 		{
-			"указатель_на_именованный", "*MyStruct",
+			"named_uint8", "Flags",
+			[]string{"type Flags uint8"},
+			[]string{"x = 0"},
+		},
+		{
+			"named_int64", "Counter",
+			[]string{"type Counter int64"},
+			[]string{"x = 0"},
+		},
+		{
+			"named_bool", "Enabled",
+			[]string{"type Enabled bool"},
+			[]string{"x = false"},
+		},
+
+		// Именованные slice/map.
+		{
+			"named_slice", "Items",
+			[]string{"type Items []int"},
+			[]string{"x = x[:0]"},
+		},
+		{
+			"named_map", "Lookup",
+			[]string{"type Lookup map[string]int"},
+			[]string{"clear(x)"},
+		},
+
+		// Структуры — через интерфейсный Reset().
+		{
+			"named_struct", "MyStruct",
+			[]string{"type MyStruct struct{}"},
+			[]string{"any(&x).(interface{ Reset() })", "resetter.Reset()"},
+		},
+
+		// Указатели.
+		{
+			"ptr_to_string", "*string", nil,
+			[]string{"x != nil", `(*x) = ""`},
+		},
+		{
+			"ptr_to_named_string", "*UserID",
+			[]string{"type UserID string"},
+			[]string{"x != nil", `(*x) = ""`},
+		},
+		{
+			"ptr_to_slice", "*[]int", nil,
+			[]string{"x != nil", "(*x) = (*x)[:0]"},
+		},
+		{
+			"ptr_to_named", "*MyStruct",
+			[]string{"type MyStruct struct{}"},
 			[]string{"any(x).(interface{ Reset() })", "x != nil", "resetter.Reset()"},
+		},
+
+		// Массивы.
+		{
+			"fixed_array", "[4]int", nil,
+			[]string{"for i := range x {", "x[i] = 0"},
+		},
+		{
+			"fixed_array_named", "[4]UserID",
+			[]string{"type UserID string"},
+			[]string{"for i := range x {", `x[i] = ""`},
 		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := genReset("x", parseExpr(t, c.expr))
+			got := genResetType("x", typeOf(t, c.expr, c.decls...))
 			for _, w := range c.wants {
 				if !strings.Contains(got, w) {
-					t.Fatalf("genReset(%q) = %q\nне найдено %q", c.expr, got, w)
+					t.Fatalf("genResetType(%q) = %q\nне найдено %q", c.expr, got, w)
 				}
 			}
 		})
@@ -184,7 +294,9 @@ func names(s []*structInfo) []string {
 // --- generate --------------------------------------------------------------
 
 func TestGenerate_OutputIsValidGo(t *testing.T) {
-	f := mustParse(t, "p.go", `package p
+	// ВАЖНО: парсим и типизируем одним и тем же FileSet'ом,
+	// иначе go/types падает с SIGSEGV в (*Checker).filename.
+	f, fset := mustParseWithFset(t, "p.go", `package p
 
 // generate:reset
 type S struct {
@@ -193,15 +305,26 @@ type S struct {
 	L []int
 	M map[string]int
 }
+
+type UserID string
+
+// generate:reset
+type WithNamed struct {
+	ID UserID
+}
 `)
+	info := typeCheckInfo(t, fset, f)
 	structs := findStructs([]*ast.File{f})
 
-	code, err := generate("p", structs)
+	code, err := generate("p", structs, info)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fset := token.NewFileSet()
-	if _, parseErr := parser.ParseFile(fset, "reset.gen.go", code, 0); parseErr != nil {
+
+	// Для проверки синтаксиса сгенерированного файла — отдельный FileSet,
+	// это безопасно, потому что здесь не вызывается types.Check.
+	outFset := token.NewFileSet()
+	if _, parseErr := parser.ParseFile(outFset, "reset.gen.go", code, 0); parseErr != nil {
 		t.Fatalf("сгенерированный код — не валидный Go: %v\n%s", parseErr, code)
 	}
 	for _, want := range []string{
@@ -210,6 +333,8 @@ type S struct {
 		`(*rs.P) = ""`,
 		"rs.L = rs.L[:0]",
 		"clear(rs.M)",
+		// Именованный тип над примитивом корректно сбрасывается.
+		`rs.ID = ""`,
 	} {
 		if !strings.Contains(string(code), want) {
 			t.Fatalf("ожидалось %q в:\n%s", want, code)
@@ -223,6 +348,8 @@ func TestRun_EndToEnd(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, "sample.go"), `package sample
 
+type UserID string
+
 // generate:reset
 type Sample struct {
 	N     int
@@ -231,6 +358,7 @@ type Sample struct {
 	M     map[string]int
 	P     *string
 	Child *Sample
+	ID    UserID
 }
 `)
 	if err := Run(dir); err != nil {
@@ -243,7 +371,7 @@ type Sample struct {
 		t.Fatalf("сгенерированный файл отсутствует: %v", err)
 	}
 
-	// Проверяем, что это валидный Go.
+	// Проверяем, что это валидный Go (без types.Check — отдельный FileSet ок).
 	fset := token.NewFileSet()
 	if _, parseErr := parser.ParseFile(fset, out, data, 0); parseErr != nil {
 		t.Fatalf("сгенерированный файл — не валидный Go: %v\n%s", parseErr, data)
@@ -258,6 +386,8 @@ type Sample struct {
 		"clear(rs.M)",
 		`(*rs.P) = ""`,
 		"resetter.Reset()",
+		// Ключевое: именованный string сброшен.
+		`rs.ID = ""`,
 	} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("ожидалось %q в сгенерированном файле:\n%s", want, data)
@@ -362,7 +492,7 @@ type X struct{ N int }
 		t.Fatal(err)
 	}
 	// Внешняя переменная называется readErr, чтобы не затенять err
-	// из if-блока ниже (это ловит govet shadow).
+	// из if-блока ниже (govet shadow).
 	first, readErr := os.ReadFile(filepath.Join(dir, GeneratedFile))
 	if readErr != nil {
 		t.Fatal(readErr)
