@@ -163,7 +163,7 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
-			if err := json.NewEncoder(w).Encode(resp); err != nil {
+			if err = json.NewEncoder(w).Encode(resp); err != nil {
 				logger.Log.Error("failed to encode response", zap.Error(err))
 			}
 			return
@@ -238,7 +238,7 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	defer r.Body.Close()
 
 	var reqItems []models.BatchRequestItem
-	if err := json.Unmarshal(body, &reqItems); err != nil {
+	if err = json.Unmarshal(body, &reqItems); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}

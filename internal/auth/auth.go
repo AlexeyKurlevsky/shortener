@@ -1,3 +1,4 @@
+// Package auth реализует аутентификацию пользователей
 package auth
 
 import (

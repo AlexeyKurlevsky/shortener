@@ -1,3 +1,5 @@
+// Package storage определяет интерфейс хранилища и его реализации:
+// in-memory, JSON-файловую и PostgreSQL.
 package storage
 
 import (

@@ -1,3 +1,5 @@
+// Package server собирает HTTP-роутер и связывает обработчики
+// с маршрутами приложения.
 package server
 
 import (

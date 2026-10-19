@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -23,11 +22,11 @@ import (
 func main() {
 	cfg, err := config.NewConfig()
 	if err != nil {
-		log.Fatalf("Incorrect config: %v", err)
+		logger.Log.Fatal("Incorrect config", zap.Error(err))
 	}
 
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
+		logger.Log.Fatal("Failed to initialize logger", zap.Error(err))
 	}
 
 	// ---- Аудит ----

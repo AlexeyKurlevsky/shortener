@@ -109,7 +109,7 @@ func (p *PostgresStorage) Save(ctx context.Context, id, url, userID string) erro
 	}
 	defer tx.Rollback(ctx)
 
-	if err := p.ensureUser(ctx, tx, userID); err != nil {
+	if err = p.ensureUser(ctx, tx, userID); err != nil {
 		return err
 	}
 

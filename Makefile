@@ -4,6 +4,12 @@ run:
 build:
 	go build -o ./cmd/shortener/shortener ./cmd/shortener
 
+staticlint: build_staticlint
+	./staticlint ./...
+
+build_staticlint:
+	go build -o ./staticlint ./cmd/staticlint
+
 test_course: build
 	shortenertest -test.v -test.run=^TestIteration10$ -binary-path=cmd/shortener/shortener
 
