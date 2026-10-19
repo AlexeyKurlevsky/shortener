@@ -163,7 +163,8 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusConflict)
-			if err = json.NewEncoder(w).Encode(resp); err != nil {
+			respErr := json.NewEncoder(w).Encode(resp)
+			if respErr != nil {
 				logger.Log.Error("failed to encode response", zap.Error(err))
 			}
 			return
@@ -259,7 +260,8 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(newItems) > 0 {
-		if err := h.storage.BatchSave(r.Context(), newItems, userID); err != nil {
+		saveErr := h.storage.BatchSave(r.Context(), newItems, userID)
+		if saveErr != nil {
 			logger.Log.Error("failed to save batch", zap.Error(err))
 			http.Error(w, "Failed to save batch", http.StatusInternalServerError)
 			return
@@ -278,7 +280,8 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 	respItems := buildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(respItems); err != nil {
+	respErr := json.NewEncoder(w).Encode(respItems)
+	if respErr != nil {
 		logger.Log.Error("failed to encode response", zap.Error(err))
 	}
 }

@@ -18,6 +18,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,18 +39,21 @@ func Run(root string) error {
 	if err != nil {
 		return err
 	}
-	return filepath.Walk(abs, func(path string, info os.FileInfo, err error) error {
+	return filepath.WalkDir(abs, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !info.IsDir() {
+		if !d.IsDir() {
 			return nil
 		}
-		name := info.Name()
+		name := d.Name()
+		// Пропускаем служебные каталоги и скрытые (по префиксу ".").
+		// Проверки на "." и ".." не нужны: WalkDir такие имена
+		// пользовательских путей не отдаёт.
 		if name == "vendor" || name == "testdata" {
 			return filepath.SkipDir
 		}
-		if name != "." && name != ".." && strings.HasPrefix(name, ".") {
+		if strings.HasPrefix(name, ".") {
 			return filepath.SkipDir
 		}
 		return processDir(path)

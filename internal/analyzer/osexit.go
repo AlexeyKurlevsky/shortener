@@ -4,6 +4,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"go/ast"
 	"strings"
 
@@ -37,11 +38,17 @@ var OsExitAnalyzer = &analysis.Analyzer{
 }
 
 func run(pass *analysis.Pass) (interface{}, error) {
+	// Тип результата inspect.Analyzer гарантирован контрактом, но если
+	// assertion не удался, это признак рассогласования версий или бага
+	// в зависимостях — возвращаем ошибку, чтобы multichecker упал громко.
 	insp, ok := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 	if !ok {
-		return nil, nil
+		return nil, fmt.Errorf("osexit: unexpected type %T for inspect.Analyzer result",
+			pass.ResultOf[inspect.Analyzer])
 	}
 
+	// Проверяем только пакет main. Это не ошибка, а штатный сценарий
+	// «пакет вне области интереса» — тихо пропускаем.
 	if pass.Pkg.Name() != "main" {
 		return nil, nil
 	}
@@ -53,10 +60,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		}
 
 		// Пропускаем файлы, не принадлежащие исходникам модуля:
-		// - файлы без расширения .go (артефакты кеша сборки, например ...-d);
-		// - файлы, помеченные как сгенерированные в GOROOT (префикс пути
-		//   содержит "/src/" в составе GOROOT невозможно отличить без
-		//   runtime.GOROOT(), поэтому полагаемся на расширение и путь кеша).
+		// артефакты кеша сборки (без расширения .go) и файлы из go-build.
 		pos := pass.Fset.Position(fn.Pos())
 		if !strings.HasSuffix(pos.Filename, ".go") {
 			return
