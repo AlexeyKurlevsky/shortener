@@ -126,7 +126,7 @@ func main() {
 	}
 
 	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -160,7 +160,7 @@ func main() {
 	go func() {
 		defer close(done)
 
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutCancel()
 
 		if err := srv.Shutdown(shutCtx); err != nil {
@@ -169,7 +169,10 @@ func main() {
 		}
 		logger.Log.Info("HTTP server stopped")
 
-		auditPublisher.Close() // дожидается обработки остатка очереди
+		h.Close()
+		logger.Log.Info("Delete worker stopped")
+
+		auditPublisher.Close()
 		logger.Log.Info("Audit publisher closed")
 
 		if fileObs != nil {
@@ -182,7 +185,7 @@ func main() {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(45 * time.Second):
 		logger.Log.Warn("Shutdown timeout exceeded, exiting anyway")
 	}
 }
