@@ -11,33 +11,31 @@ package config
 import (
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
-	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 
-	"github.com/caarlos0/env/v11"
 	"github.com/joho/godotenv"
+	"github.com/spf13/pflag"
+	"github.com/spf13/viper"
 )
 
 type Config struct {
-	ServerAddr      string `env:"SERVER_ADDRESS" json:"server_address"`
-	BaseURL         string `env:"BASE_URL" json:"base_url"`
-	LogLevel        string `env:"LOG" json:"log_level"`
-	FileStoragePath string `env:"FILE_STORAGE_PATH" json:"file_storage_path"`
-	DatabaseDSN     string `env:"DATABASE_DSN" json:"database_dsn"`
-	SecretKey       string `env:"SECRET_KEY" json:"secret_key"`
-	SecretKeyByte   []byte `json:"-"`
-	AuditFile       string `env:"AUDIT_FILE" json:"audit_file"`
-	AuditURL        string `env:"AUDIT_URL" json:"audit_url"`
+	ServerAddr      string `env:"SERVER_ADDRESS"      mapstructure:"server-addr"`
+	BaseURL         string `env:"BASE_URL"            mapstructure:"base-url"`
+	LogLevel        string `env:"LOG"                 mapstructure:"log-level"`
+	FileStoragePath string `env:"FILE_STORAGE_PATH"   mapstructure:"file-storage-path"`
+	DatabaseDSN     string `env:"DATABASE_DSN"        mapstructure:"database-dsn"`
+	SecretKey       string `env:"SECRET_KEY"          mapstructure:"secret-key"`
+	SecretKeyByte   []byte `mapstructure:"-"`
+	AuditFile       string `env:"AUDIT_FILE"          mapstructure:"audit-file"`
+	AuditURL        string `env:"AUDIT_URL"           mapstructure:"audit-url"`
 
-	// HTTPS через ACME (autocert)
-	EnableHTTPS  bool     `env:"ENABLE_HTTPS" json:"enable_https"`
-	Domains      []string `env:"DOMAINS" envSeparator:"," json:"domains"`
-	ACMEEmail    string   `env:"ACME_EMAIL" json:"acme_email"`
-	ACMECacheDir string   `env:"ACME_CACHE_DIR" json:"acme_cache_dir"`
+	EnableHTTPS  bool     `env:"ENABLE_HTTPS"   mapstructure:"enable-https"`
+	Domains      []string `env:"DOMAINS" envSeparator:"," mapstructure:"domains"`
+	ACMEEmail    string   `env:"ACME_EMAIL"     mapstructure:"acme-email"`
+	ACMECacheDir string   `env:"ACME_CACHE_DIR" mapstructure:"acme-cache"`
 }
 
 func NewConfig() (*Config, error) {
@@ -45,96 +43,67 @@ func NewConfig() (*Config, error) {
 		log.Println("No .env file found, relying on system envs")
 	}
 
-	// ---- Флаги во временные переменные ----
-	var (
-		configPath      string
-		serverAddr      string
-		baseURL         string
-		fileStoragePath string
-		logLevel        string
-		databaseDSN     string
-		secretKey       string
-		auditFile       string
-		auditURL        string
-		enableHTTPS     bool
-		domainsRaw      string
-		acmeEmail       string
-		acmeCache       string
-	)
-
-	flag.StringVar(&configPath, "c", "", "path to JSON config file")
-	flag.StringVar(&configPath, "config", "", "path to JSON config file")
-	flag.StringVar(&serverAddr, "a", ":8080", "address to run server (e.g., localhost:8888)")
-	flag.StringVar(&baseURL, "b", "http://localhost:8080", "base URL for shortened links")
-	flag.StringVar(&fileStoragePath, "f", "storage.json", "path file storage")
-	flag.StringVar(&logLevel, "l", "info", "log level")
-	flag.StringVar(&databaseDSN, "d", "", "DB DSN")
-	flag.StringVar(&secretKey, "k", "", "secret key for cookie signing (base64)")
-	flag.StringVar(&auditFile, "audit-file", "", "path to audit log file (disabled if empty)")
-	flag.StringVar(&auditURL, "audit-url", "", "remote audit server URL (disabled if empty)")
-	flag.BoolVar(&enableHTTPS, "s", false, "enable HTTPS via ACME (autocert); same as ENABLE_HTTPS=true")
-	flag.StringVar(&domainsRaw, "domains", "", "comma-separated domains for ACME")
-	flag.StringVar(&acmeEmail, "acme-email", "", "email for ACME registration")
-	flag.StringVar(&acmeCache, "acme-cache", "certs", "directory for ACME certificate cache")
-
-	flag.Parse()
+	v := viper.New()
 
 	// ---- 1. Значения по умолчанию ----
-	cfg := &Config{
-		ServerAddr:      ":8080",
-		BaseURL:         "http://localhost:8080",
-		FileStoragePath: "storage.json",
-		LogLevel:        "info",
-		ACMECacheDir:    "certs",
-	}
+	v.SetDefault("server-addr", ":8080")
+	v.SetDefault("base-url", "http://localhost:8080")
+	v.SetDefault("log-level", "info")
+	v.SetDefault("file-storage-path", "storage.json")
+	v.SetDefault("acme-cache", "certs")
 
 	// ---- 2. JSON-файл (наименьший приоритет) ----
-	// Путь: явный флаг -c/-config > env CONFIG.
-	cfgPath := configPath
+	// Путь: флаг -c/-config > env CONFIG > (нет файла).
+	// Читаем путь ДО viper.ReadInConfig, чтобы учесть флаг.
+	cfgPath := ""
+	pf := newFlagSet()
+	if err := pf.Parse(os.Args[1:]); err != nil {
+		return nil, err
+	}
+	if f := pf.Lookup("config"); f != nil {
+		cfgPath = f.Value.String()
+	}
 	if cfgPath == "" {
 		cfgPath = os.Getenv("CONFIG")
 	}
+
 	if cfgPath != "" {
-		if err := loadJSON(cfgPath, cfg); err != nil {
-			return nil, err
+		v.SetConfigFile(cfgPath)
+		v.SetConfigType("json")
+		if err := v.ReadInConfig(); err != nil {
+			return nil, fmt.Errorf("read config file %q: %w", cfgPath, err)
 		}
 		log.Printf("Loaded config from %s", cfgPath)
 	}
 
-	// ---- 3. Переменные окружения (перезаписывают JSON) ----
-	if err := env.Parse(cfg); err != nil {
+	// ---- 3. Переменные окружения ----
+	// Явно связываем ключи viper с существующими именами env,
+	// чтобы не менять их и не добавлять префикс.
+	_ = v.BindEnv("server-addr", "SERVER_ADDRESS")
+	_ = v.BindEnv("base-url", "BASE_URL")
+	_ = v.BindEnv("log-level", "LOG")
+	_ = v.BindEnv("file-storage-path", "FILE_STORAGE_PATH")
+	_ = v.BindEnv("database-dsn", "DATABASE_DSN")
+	_ = v.BindEnv("secret-key", "SECRET_KEY")
+	_ = v.BindEnv("audit-file", "AUDIT_FILE")
+	_ = v.BindEnv("audit-url", "AUDIT_URL")
+	_ = v.BindEnv("enable-https", "ENABLE_HTTPS")
+	_ = v.BindEnv("domains", "DOMAINS")
+	_ = v.BindEnv("acme-email", "ACME_EMAIL")
+	_ = v.BindEnv("acme-cache", "ACME_CACHE_DIR")
+
+	// ---- 4. Флаги (наивысший приоритет) ----
+	// BindPFlags связывает ВСЕ зарегистрированные флаги автоматически:
+	// добавление нового флага в newFlagSet() больше не требует правок здесь.
+	if err := v.BindPFlags(pf); err != nil {
 		return nil, err
 	}
 
-	// ---- 4. Флаги: только явно переданные (наивысший приоритет) ----
-	flag.Visit(func(f *flag.Flag) {
-		switch f.Name {
-		case "a":
-			cfg.ServerAddr = serverAddr
-		case "b":
-			cfg.BaseURL = baseURL
-		case "f":
-			cfg.FileStoragePath = fileStoragePath
-		case "l":
-			cfg.LogLevel = logLevel
-		case "d":
-			cfg.DatabaseDSN = databaseDSN
-		case "k":
-			cfg.SecretKey = secretKey
-		case "audit-file":
-			cfg.AuditFile = auditFile
-		case "audit-url":
-			cfg.AuditURL = auditURL
-		case "s":
-			cfg.EnableHTTPS = enableHTTPS
-		case "domains":
-			cfg.Domains = splitCommaList(domainsRaw)
-		case "acme-email":
-			cfg.ACMEEmail = acmeEmail
-		case "acme-cache":
-			cfg.ACMECacheDir = acmeCache
-		}
-	})
+	// ---- Слияние в структуру ----
+	var cfg Config
+	if err := v.Unmarshal(&cfg); err != nil {
+		return nil, err
+	}
 
 	// ---- Пост-обработка ----
 	if !strings.HasPrefix(cfg.BaseURL, "http://") && !strings.HasPrefix(cfg.BaseURL, "https://") {
@@ -155,38 +124,32 @@ func NewConfig() (*Config, error) {
 		cfg.SecretKeyByte = key
 	}
 
-	// autocert без доменов не сможет получить сертификат.
 	if cfg.EnableHTTPS && len(cfg.Domains) == 0 {
-		return nil, fmt.Errorf("HTTPS enabled but no domains provided (use -domains, DOMAINS or \"domains\" in JSON)")
+		return nil, fmt.Errorf("HTTPS enabled but no domains provided (use --domains, DOMAINS or \"domains\" in JSON)")
 	}
 
-	return cfg, nil
+	return &cfg, nil
 }
 
-// loadJSON читает JSON-файл и накладывает значения на cfg.
-// Отсутствующие в файле поля остаются без изменений.
-func loadJSON(path string, cfg *Config) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fmt.Errorf("read config file %q: %w", path, err)
-	}
-	if err := json.Unmarshal(data, cfg); err != nil {
-		return fmt.Errorf("parse config file %q: %w", path, err)
-	}
-	return nil
-}
+// newFlagSet создаёт и возвращает FlagSet со всеми флагами приложения.
+// Чтобы добавить новый флаг, достаточно добавить одну строку сюда —
+// viper подхватит его автоматически через BindPFlags.
+func newFlagSet() *pflag.FlagSet {
+	pf := pflag.NewFlagSet("shortener", pflag.ContinueOnError)
 
-// splitCommaList парсит "a, b ,c" → ["a","b","c"], отбрасывая пустые элементы.
-func splitCommaList(s string) []string {
-	if s == "" {
-		return nil
-	}
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if v := strings.TrimSpace(p); v != "" {
-			out = append(out, v)
-		}
-	}
-	return out
+	pf.StringP("config", "c", "", "path to JSON config file")
+	pf.StringP("server-addr", "a", ":8080", "address to run server (e.g., localhost:8888)")
+	pf.StringP("base-url", "b", "http://localhost:8080", "base URL for shortened links")
+	pf.StringP("file-storage-path", "f", "storage.json", "path file storage")
+	pf.StringP("log-level", "l", "info", "log level")
+	pf.StringP("database-dsn", "d", "", "DB DSN")
+	pf.StringP("secret-key", "k", "", "secret key for cookie signing (base64)")
+	pf.String("audit-file", "", "path to audit log file (disabled if empty)")
+	pf.String("audit-url", "", "remote audit server URL (disabled if empty)")
+	pf.BoolP("enable-https", "s", false, "enable HTTPS via ACME (autocert); same as ENABLE_HTTPS=true")
+	pf.String("domains", "", "comma-separated domains for ACME")
+	pf.String("acme-email", "", "email for ACME registration")
+	pf.String("acme-cache", "certs", "directory for ACME certificate cache")
+
+	return pf
 }

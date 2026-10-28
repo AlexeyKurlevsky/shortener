@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -125,8 +124,9 @@ func main() {
 		)
 	}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	ctx, stop := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -148,11 +148,11 @@ func main() {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Log.Fatal("Server failed", zap.Error(err))
 		}
-	case sig := <-stop:
+	case <-ctx.Done():
 		logger.Log.Info("Signal received, shutting down",
-			zap.String("signal", sig.String()))
+			zap.Error(ctx.Err()))
+		stop()
 	}
-
 	// Всё завершение выполняется в отдельной горутине, а main
 	// ограничивает его по времени. Даже при полном ступоре внутри
 	// процесс выйдет через 5 секунд.
