@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"os"
 	"os/signal"
 	"syscall"
 	"time"
@@ -16,6 +15,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/tlsconfig"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"go.uber.org/zap"
 )
@@ -107,16 +107,39 @@ func main() {
 		zap.String("FileStoragePath", cfg.FileStoragePath),
 		zap.String("AuditFile", cfg.AuditFile),
 		zap.String("AuditURL", cfg.AuditURL),
+		zap.Bool("EnableHTTPS", cfg.EnableHTTPS),
+		zap.Strings("Domains", cfg.Domains),
 	)
 
 	// ---- Сервер ----
 	srv := &http.Server{Addr: cfg.ServerAddr, Handler: r}
 
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	if cfg.EnableHTTPS {
+		manager := tlsconfig.NewManager(cfg.Domains, cfg.ACMEEmail, cfg.ACMECacheDir)
+		srv.Addr = ":443"
+		srv.TLSConfig = tlsconfig.NewTLSConfig(manager)
+		logger.Log.Info("ACME manager initialized",
+			zap.Strings("domains", cfg.Domains),
+			zap.String("cache", cfg.ACMECacheDir),
+		)
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(),
+		syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
+		if cfg.EnableHTTPS {
+			logger.Log.Info("Starting HTTPS server (autocert)",
+				zap.String("addr", srv.Addr),
+				zap.Strings("domains", cfg.Domains),
+			)
+			// Пустые пути — сертификаты берутся из srv.TLSConfig.GetCertificate
+			errCh <- srv.ListenAndServeTLS("", "")
+			return
+		}
+		logger.Log.Info("Starting HTTP server", zap.String("addr", srv.Addr))
 		errCh <- srv.ListenAndServe()
 	}()
 
@@ -125,11 +148,11 @@ func main() {
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Log.Fatal("Server failed", zap.Error(err))
 		}
-	case sig := <-stop:
+	case <-ctx.Done():
 		logger.Log.Info("Signal received, shutting down",
-			zap.String("signal", sig.String()))
+			zap.Error(ctx.Err()))
+		stop()
 	}
-
 	// Всё завершение выполняется в отдельной горутине, а main
 	// ограничивает его по времени. Даже при полном ступоре внутри
 	// процесс выйдет через 5 секунд.
@@ -137,7 +160,7 @@ func main() {
 	go func() {
 		defer close(done)
 
-		shutCtx, shutCancel := context.WithTimeout(context.Background(), 3*time.Second)
+		shutCtx, shutCancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer shutCancel()
 
 		if err := srv.Shutdown(shutCtx); err != nil {
@@ -146,7 +169,10 @@ func main() {
 		}
 		logger.Log.Info("HTTP server stopped")
 
-		auditPublisher.Close() // дожидается обработки остатка очереди
+		h.Close()
+		logger.Log.Info("Delete worker stopped")
+
+		auditPublisher.Close()
 		logger.Log.Info("Audit publisher closed")
 
 		if fileObs != nil {
@@ -159,7 +185,7 @@ func main() {
 
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(45 * time.Second):
 		logger.Log.Warn("Shutdown timeout exceeded, exiting anyway")
 	}
 }
