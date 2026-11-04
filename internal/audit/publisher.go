@@ -11,6 +11,7 @@ import (
 type Publisher struct {
 	mu        sync.RWMutex
 	observers []Observer
+	closed    bool
 
 	ch chan Event
 	wg sync.WaitGroup
@@ -54,6 +55,15 @@ func (p *Publisher) Start() {
 
 // Publish не блокирует вызывающего. При переполнении буфера событие теряется.
 func (p *Publisher) Publish(e Event) {
+	p.mu.RLock()
+	if p.closed {
+		p.mu.RUnlock()
+		logger.Log.Warn("audit publisher closed, event dropped",
+			zap.String("action", string(e.Action)))
+		return
+	}
+	p.mu.RUnlock()
+
 	select {
 	case p.ch <- e:
 	default:
@@ -66,6 +76,9 @@ func (p *Publisher) Publish(e Event) {
 // остатка очереди и возвращается. Идемпотентен.
 func (p *Publisher) Close() {
 	p.once.Do(func() {
+		p.mu.Lock()
+		p.closed = true
+		p.mu.Unlock()
 		if p.cancel != nil {
 			p.cancel()
 		}

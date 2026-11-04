@@ -39,6 +39,7 @@ func (o *FileObserver) Close() error {
 	if o.file == nil {
 		return nil
 	}
+	_ = o.file.Sync()
 	err := o.file.Close()
 	o.file = nil
 	return err

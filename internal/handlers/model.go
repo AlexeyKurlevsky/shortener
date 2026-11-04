@@ -28,6 +28,7 @@ type Handler struct {
 	batchSize     int
 	flushInterval time.Duration
 	audit         AuditPublisher
+	closeOnce     sync.Once
 }
 
 func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger, auditPub AuditPublisher) *Handler {
@@ -39,8 +40,8 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger, auditPub
 		deleteChan:    make(chan deleteTask, 1000),
 		ctx:           ctx,
 		cancel:        cancel,
-		batchSize:     100,             // размер батча
-		flushInterval: 5 * time.Second, // интервал принудительного сброса
+		batchSize:     100,
+		flushInterval: 5 * time.Second,
 		audit:         auditPub,
 	}
 	h.wg.Add(1)
@@ -50,8 +51,9 @@ func NewHandler(storage storage.Storage, cfg *config.Config, db Pinger, auditPub
 
 // Close останавливает воркер и ждёт его завершения
 func (h *Handler) Close() {
-	h.cancel()
-	close(h.deleteChan)
+	h.closeOnce.Do(func() {
+		h.cancel()
+	})
 	h.wg.Wait()
 }
 
@@ -65,28 +67,33 @@ func (h *Handler) deleteWorker() {
 
 	for {
 		select {
-		case task, ok := <-h.deleteChan:
-			if !ok {
-				// канал закрыт – сбрасываем оставшиеся задачи
-				h.flushBatch(batch)
-				return
-			}
+		case task := <-h.deleteChan:
 			batch = append(batch, task)
 			if len(batch) >= h.batchSize {
 				h.flushBatch(batch)
-				batch = make([]deleteTask, 0, h.batchSize*2)
+				batch = batch[:0]
 			}
 
 		case <-ticker.C:
 			if len(batch) > 0 {
 				h.flushBatch(batch)
-				batch = make([]deleteTask, 0, h.batchSize*2)
+				batch = batch[:0]
 			}
 
 		case <-h.ctx.Done():
-			// сигнал завершения – сбрасываем оставшиеся задачи
-			h.flushBatch(batch)
-			return
+			for {
+				select {
+				case task := <-h.deleteChan:
+					batch = append(batch, task)
+					if len(batch) >= h.batchSize {
+						h.flushBatch(batch)
+						batch = batch[:0]
+					}
+				default:
+					h.flushBatch(batch)
+					return
+				}
+			}
 		}
 	}
 }
@@ -103,7 +110,11 @@ func (h *Handler) flushBatch(tasks []deleteTask) {
 	for userID, ids := range groups {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if err := h.storage.DeleteURLs(ctx, ids, userID); err != nil {
-			logger.Log.Error("failed to delete URLs", zap.Error(err), zap.String("userID", userID), zap.Strings("ids", ids))
+			logger.Log.Error("failed to delete URLs",
+				zap.Error(err),
+				zap.String("userID", userID),
+				zap.Strings("ids", ids),
+			)
 		}
 		cancel()
 	}
