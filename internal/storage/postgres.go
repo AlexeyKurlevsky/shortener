@@ -267,3 +267,27 @@ func (p *PostgresStorage) DeleteURLs(ctx context.Context, ids []string, userID s
 	}
 	return nil
 }
+
+// CountURLs возвращает количество сокращённых URL в сервисе.
+// Учитываются только «живые» записи (is_deleted = false).
+func (p *PostgresStorage) CountURLs(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM urls WHERE is_deleted = false`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count urls: %w", err)
+	}
+	return n, nil
+}
+
+// CountUsers возвращает количество пользователей в сервисе.
+// Так как ensureUser создаёт запись в users только при сохранении ссылки,
+// это фактически число пользователей, когда-либо сокращавших URL.
+func (p *PostgresStorage) CountUsers(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count users: %w", err)
+	}
+	return n, nil
+}

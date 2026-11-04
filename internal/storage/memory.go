@@ -127,3 +127,29 @@ func (m *MemoryStorage) DeleteURLs(ctx context.Context, ids []string, userID str
 	}
 	return nil
 }
+
+// CountURLs возвращает количество «живых» сокращённых URL.
+func (m *MemoryStorage) CountURLs(ctx context.Context) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	n := 0
+	for _, link := range m.data {
+		if !link.IsDeleted {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// CountUsers возвращает количество уникальных пользователей.
+func (m *MemoryStorage) CountUsers(ctx context.Context) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	users := make(map[string]struct{})
+	for _, link := range m.data {
+		if link.UserID != "" {
+			users[link.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}
