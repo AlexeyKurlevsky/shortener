@@ -16,6 +16,7 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/server"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/tlsconfig"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
 	"go.uber.org/zap"
 )
@@ -107,16 +108,38 @@ func main() {
 		zap.String("FileStoragePath", cfg.FileStoragePath),
 		zap.String("AuditFile", cfg.AuditFile),
 		zap.String("AuditURL", cfg.AuditURL),
+		zap.Bool("EnableHTTPS", cfg.EnableHTTPS),
+		zap.Strings("Domains", cfg.Domains),
 	)
 
 	// ---- Сервер ----
 	srv := &http.Server{Addr: cfg.ServerAddr, Handler: r}
+
+	if cfg.EnableHTTPS {
+		manager := tlsconfig.NewManager(cfg.Domains, cfg.ACMEEmail, cfg.ACMECacheDir)
+		srv.Addr = ":443"
+		srv.TLSConfig = tlsconfig.NewTLSConfig(manager)
+		logger.Log.Info("ACME manager initialized",
+			zap.Strings("domains", cfg.Domains),
+			zap.String("cache", cfg.ACMECacheDir),
+		)
+	}
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
 
 	errCh := make(chan error, 1)
 	go func() {
+		if cfg.EnableHTTPS {
+			logger.Log.Info("Starting HTTPS server (autocert)",
+				zap.String("addr", srv.Addr),
+				zap.Strings("domains", cfg.Domains),
+			)
+			// Пустые пути — сертификаты берутся из srv.TLSConfig.GetCertificate
+			errCh <- srv.ListenAndServeTLS("", "")
+			return
+		}
+		logger.Log.Info("Starting HTTP server", zap.String("addr", srv.Addr))
 		errCh <- srv.ListenAndServe()
 	}()
 
