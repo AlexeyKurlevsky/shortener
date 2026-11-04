@@ -376,3 +376,24 @@ func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusAccepted)
 }
+
+func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
+	urls, err := h.storage.CountURLs(r.Context())
+	if err != nil {
+		logger.Log.Error("failed to count URLs", zap.Error(err))
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	users, err := h.storage.CountUsers(r.Context())
+	if err != nil {
+		logger.Log.Error("failed to count users", zap.Error(err))
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	resp := models.StatsResponse{URLs: urls, Users: users}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logger.Log.Error("failed to encode response", zap.Error(err))
+	}
+}

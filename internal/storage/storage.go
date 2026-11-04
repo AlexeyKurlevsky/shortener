@@ -27,6 +27,8 @@ type Storage interface {
 	BatchSave(ctx context.Context, items []BatchItem, userID string) error
 	GetAllByUser(ctx context.Context, userID string) ([]URLPair, error)
 	DeleteURLs(ctx context.Context, ids []string, userID string) error
+	CountURLs(ctx context.Context) (int, error)
+	CountUsers(ctx context.Context) (int, error)
 }
 
 type BatchItem struct {

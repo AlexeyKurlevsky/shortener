@@ -69,6 +69,8 @@ type mockStorage struct {
 	batchSaveFunc    func(ctx context.Context, items []storage.BatchItem, userID string) error
 	getAllByUserFunc func(ctx context.Context, userID string) ([]storage.URLPair, error)
 	deleteURLsFunc   func(ctx context.Context, ids []string, userID string) error
+	countURLsFunc    func(ctx context.Context) (int, error)
+	countUsersFunc   func(ctx context.Context) (int, error)
 }
 
 func (m *mockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
@@ -132,6 +134,20 @@ func (m *mockStorage) DeleteURLs(ctx context.Context, ids []string, userID strin
 		return m.deleteURLsFunc(ctx, ids, userID)
 	}
 	return nil
+}
+
+func (m *mockStorage) CountURLs(ctx context.Context) (int, error) {
+	if m.countURLsFunc != nil {
+		return m.countURLsFunc(ctx)
+	}
+	return 0, nil
+}
+
+func (m *mockStorage) CountUsers(ctx context.Context) (int, error) {
+	if m.countUsersFunc != nil {
+		return m.countUsersFunc(ctx)
+	}
+	return 0, nil
 }
 
 // setupTest создаёт Handler с mock-хранилищем и заглушкой аудита.
@@ -648,6 +664,85 @@ func TestAuditNotPublishedOnFailure(t *testing.T) {
 	})
 }
 
+func TestGetStats(t *testing.T) {
+	tests := []struct {
+		name       string
+		countURLs  func(ctx context.Context) (int, error)
+		countUsers func(ctx context.Context) (int, error)
+		wantStatus int
+		wantURLs   int
+		wantUsers  int
+	}{
+		{
+			name:       "success",
+			countURLs:  func(ctx context.Context) (int, error) { return 42, nil },
+			countUsers: func(ctx context.Context) (int, error) { return 7, nil },
+			wantStatus: http.StatusOK,
+			wantURLs:   42,
+			wantUsers:  7,
+		},
+		{
+			name:       "empty service",
+			countURLs:  func(ctx context.Context) (int, error) { return 0, nil },
+			countUsers: func(ctx context.Context) (int, error) { return 0, nil },
+			wantStatus: http.StatusOK,
+			wantURLs:   0,
+			wantUsers:  0,
+		},
+		{
+			name:       "countURLs error",
+			countURLs:  func(ctx context.Context) (int, error) { return 0, errors.New("db error") },
+			countUsers: func(ctx context.Context) (int, error) { return 0, nil },
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name:       "countUsers error",
+			countURLs:  func(ctx context.Context) (int, error) { return 10, nil },
+			countUsers: func(ctx context.Context) (int, error) { return 0, errors.New("db error") },
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockStorage{
+				countURLsFunc:  tt.countURLs,
+				countUsersFunc: tt.countUsers,
+			}
+			h := setupTest(mock)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			w := httptest.NewRecorder()
+			h.GetStats(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+
+			if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
+				t.Errorf("Content-Type = %q, want application/json", ct)
+			}
+
+			var resp models.StatsResponse
+			if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if resp.URLs != tt.wantURLs {
+				t.Errorf("urls = %d, want %d", resp.URLs, tt.wantURLs)
+			}
+			if resp.Users != tt.wantUsers {
+				t.Errorf("users = %d, want %d", resp.Users, tt.wantUsers)
+			}
+		})
+	}
+}
+
 // ------------------------------------------------------------
 // Примеры (Examples)
 // ------------------------------------------------------------
@@ -950,4 +1045,23 @@ func ExampleHandler_DeleteUserURLs() {
 	fmt.Println("status:", rec.Code)
 	// Output:
 	// status: 202
+}
+
+// ExampleHandler_GetStats показывает ответ эндпоинта статистики.
+func ExampleHandler_GetStats() {
+	mock := &mockStorage{
+		countURLsFunc:  func(ctx context.Context) (int, error) { return 42, nil },
+		countUsersFunc: func(ctx context.Context) (int, error) { return 7, nil },
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	rec := httptest.NewRecorder()
+	h.GetStats(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("body:", rec.Body.String())
+	// Output:
+	// status: 200
+	// body: {"urls":42,"users":7}
 }

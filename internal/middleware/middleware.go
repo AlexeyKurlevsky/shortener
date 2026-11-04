@@ -3,6 +3,7 @@
 package middleware
 
 import (
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -65,4 +66,23 @@ func RequestLogger(next http.Handler) http.Handler {
 			zap.Int("response_size", rw.Size),
 		)
 	})
+}
+
+// TrustedSubnetMiddleware разрешает запрос, только если X-Real-IP входит
+// в доверенную подсеть. Пустой cidr => доступ запрещён для всех.
+func TrustedSubnetMiddleware(subnet *net.IPNet) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if subnet == nil { // пустой или невалидный trusted_subnet
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+			ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP")))
+			if ip == nil || !subnet.Contains(ip) {
+				http.Error(w, "Forbidden", http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }

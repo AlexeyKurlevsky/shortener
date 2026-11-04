@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -32,10 +33,12 @@ type Config struct {
 	AuditFile       string `env:"AUDIT_FILE"          mapstructure:"audit-file"`
 	AuditURL        string `env:"AUDIT_URL"           mapstructure:"audit-url"`
 
-	EnableHTTPS  bool     `env:"ENABLE_HTTPS"   mapstructure:"enable-https"`
-	Domains      []string `env:"DOMAINS" envSeparator:"," mapstructure:"domains"`
-	ACMEEmail    string   `env:"ACME_EMAIL"     mapstructure:"acme-email"`
-	ACMECacheDir string   `env:"ACME_CACHE_DIR" mapstructure:"acme-cache"`
+	EnableHTTPS      bool       `env:"ENABLE_HTTPS"   mapstructure:"enable-https"`
+	Domains          []string   `env:"DOMAINS" envSeparator:"," mapstructure:"domains"`
+	ACMEEmail        string     `env:"ACME_EMAIL"     mapstructure:"acme-email"`
+	ACMECacheDir     string     `env:"ACME_CACHE_DIR" mapstructure:"acme-cache"`
+	TrustedSubnet    string     `env:"TRUSTED_SUBNET" mapstructure:"trusted_subnet"`
+	TrustedSubnetNet *net.IPNet `mapstructure:"-"`
 }
 
 func NewConfig() (*Config, error) {
@@ -51,6 +54,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("log-level", "info")
 	v.SetDefault("file-storage-path", "storage.json")
 	v.SetDefault("acme-cache", "certs")
+	v.SetDefault("trusted_subnet", "")
 
 	// ---- 2. JSON-файл (наименьший приоритет) ----
 	// Путь: флаг -c/-config > env CONFIG > (нет файла).
@@ -91,6 +95,7 @@ func NewConfig() (*Config, error) {
 	_ = v.BindEnv("domains", "DOMAINS")
 	_ = v.BindEnv("acme-email", "ACME_EMAIL")
 	_ = v.BindEnv("acme-cache", "ACME_CACHE_DIR")
+	_ = v.BindEnv("trusted_subnet", "TRUSTED_SUBNET")
 
 	// ---- 4. Флаги (наивысший приоритет) ----
 	// BindPFlags связывает ВСЕ зарегистрированные флаги автоматически:
@@ -128,6 +133,17 @@ func NewConfig() (*Config, error) {
 		return nil, fmt.Errorf("HTTPS enabled but no domains provided (use --domains, DOMAINS or \"domains\" in JSON)")
 	}
 
+	// ---- Валидация trusted_subnet ----
+	if cfg.TrustedSubnet != "" {
+		_, subnet, err := net.ParseCIDR(cfg.TrustedSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted_subnet %q: %w", cfg.TrustedSubnet, err)
+		}
+		cfg.TrustedSubnetNet = subnet
+	} else {
+		log.Println("WARN: trusted_subnet is empty, /api/internal/* will reject all requests")
+	}
+
 	return &cfg, nil
 }
 
@@ -150,6 +166,7 @@ func newFlagSet() *pflag.FlagSet {
 	pf.String("domains", "", "comma-separated domains for ACME")
 	pf.String("acme-email", "", "email for ACME registration")
 	pf.String("acme-cache", "certs", "directory for ACME certificate cache")
+	pf.StringP("trusted_subnet", "t", "", "trusted subnet (CIDR) for /api/internal/*; empty => deny all")
 
 	return pf
 }
