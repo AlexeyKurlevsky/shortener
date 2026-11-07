@@ -32,6 +32,7 @@ type Config struct {
 	SecretKeyByte   []byte `mapstructure:"-"`
 	AuditFile       string `env:"AUDIT_FILE"          mapstructure:"audit-file"`
 	AuditURL        string `env:"AUDIT_URL"           mapstructure:"audit-url"`
+	GRPCAddr        string `env:"GRPC_PORT"           mapstructure:"grpc-port"`
 
 	EnableHTTPS      bool       `env:"ENABLE_HTTPS"   mapstructure:"enable-https"`
 	Domains          []string   `env:"DOMAINS" envSeparator:"," mapstructure:"domains"`
@@ -52,6 +53,7 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("server-addr", ":8080")
 	v.SetDefault("base-url", "http://localhost:8080")
 	v.SetDefault("log-level", "info")
+	v.SetDefault("grpc-port", ":50051")
 	v.SetDefault("file-storage-path", "storage.json")
 	v.SetDefault("acme-cache", "certs")
 	v.SetDefault("trusted_subnet", "")
