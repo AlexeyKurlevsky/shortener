@@ -212,19 +212,19 @@ func (j *JSONStorage) CountUsers(ctx context.Context) (int, error) {
 	return len(users), nil
 }
 
-func (s *JSONStorage) Stats(ctx context.Context) (Stats, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (j *JSONStorage) Stats(ctx context.Context) (Stats, error) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
 
 	var st Stats
-	for _, link := range s.data {
+	for _, link := range j.data {
 		if link.IsDeleted {
 			continue
 		}
 		st.URLs++
 	}
 	users := make(map[string]struct{})
-	for _, link := range s.data {
+	for _, link := range j.data {
 		users[link.UserID] = struct{}{}
 	}
 	st.Users = len(users)
