@@ -145,13 +145,16 @@ func main() {
 
 	// ---- gRPC-сервер ----
 	// Валидация токена переиспользует тот же HMAC-секрет, что и HTTP-cookie.
-	grpcSrv := grpcserver.NewGRPCServer(
+	grpcSrv, err := grpcserver.NewGRPCServer(
 		cfg,
 		st,
 		userSvc.ValidateAuthorization,
 		logger.Log,
 		tlsCfg,
 	)
+	if err != nil {
+		logger.Log.Fatal("Failed to create gRPC server", zap.Error(err))
+	}
 
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {

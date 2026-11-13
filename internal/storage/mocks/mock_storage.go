@@ -27,6 +27,7 @@ type MockStorage struct {
 	DeleteURLsFunc   func(ctx context.Context, ids []string, userID string) error
 	CountURLsFunc    func(ctx context.Context) (int, error)
 	CountUsersFunc   func(ctx context.Context) (int, error)
+	StatsFunc        func(ctx context.Context) (storage.Stats, error)
 }
 
 func (m *MockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
@@ -104,6 +105,13 @@ func (m *MockStorage) CountUsers(ctx context.Context) (int, error) {
 		return m.CountUsersFunc(ctx)
 	}
 	return 0, nil
+}
+
+func (m *MockStorage) Stats(ctx context.Context) (storage.Stats, error) {
+	if m.StatsFunc != nil {
+		return m.StatsFunc(ctx)
+	}
+	return storage.Stats{}, nil
 }
 
 // Проверка на этапе компиляции, что MockStorage реализует интерфейс.

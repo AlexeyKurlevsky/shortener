@@ -7,7 +7,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/types/known/emptypb"
+	"google.golang.org/protobuf/proto"
 
 	pb "github.com/AlexeyKurlevsky/shortener/api"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
@@ -17,8 +17,6 @@ import (
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
 )
 
-// ShortenerServer — тонкий фасад над core.*: те же операции, что
-// и в HTTP-хендлерах, только транспорт другой.
 type ShortenerServer struct {
 	pb.UnimplementedShortenerServiceServer
 	cfg     *config.Config
@@ -29,20 +27,16 @@ func NewShortenerServer(cfg *config.Config, stor storage.Storage) *ShortenerServ
 	return &ShortenerServer{cfg: cfg, storage: stor}
 }
 
-// ShortenURL — gRPC-аналог POST /api/shorten.
 func (s *ShortenerServer) ShortenURL(
 	ctx context.Context,
 	req *pb.URLShortenRequest,
 ) (*pb.URLShortenResponse, error) {
 	userID, _ := ctx.Value(user.UserIDContextKey).(string)
 
-	link, err := core.ShortenURL(ctx, req.Url, userID, s.storage)
+	link, err := core.ShortenURL(ctx, req.GetUrl(), userID, s.storage)
 	if err != nil {
 		var dupErr *models.DuplicateURLError
 		if errors.As(err, &dupErr) {
-			// gRPC не умеет возвращать тело вместе с ошибкой, поэтому
-			// существующую короткую ссылку кладём в сообщение статуса.
-			// Клиент может извлечь её из st.Message().
 			return nil, status.Errorf(codes.AlreadyExists,
 				"URL already shortened: %s", s.cfg.BaseURL+"/"+dupErr.ExistingID)
 		}
@@ -53,22 +47,21 @@ func (s *ShortenerServer) ShortenURL(
 		return nil, status.Error(codes.Internal, "internal error")
 	}
 
-	return &pb.URLShortenResponse{
-		Result: link.GetFullLink(s.cfg.BaseURL),
-	}, nil
+	return pb.URLShortenResponse_builder{
+		Result: proto.String(link.GetFullLink(s.cfg.BaseURL)),
+	}.Build(), nil
 }
 
-// ExpandURL — gRPC-аналог GET /<id> (только без редиректа:
-// gRPC возвращает оригинальный URL, а не Location).
 func (s *ShortenerServer) ExpandURL(
 	ctx context.Context,
 	req *pb.URLExpandRequest,
 ) (*pb.URLExpandResponse, error) {
-	if req.Id == "" {
+	id := req.GetId()
+	if id == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid id")
 	}
 
-	original, err := core.ExpandURL(ctx, req.Id, s.storage)
+	original, err := core.ExpandURL(ctx, id, s.storage)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			return nil, status.Error(codes.NotFound, "URL not found")
@@ -78,13 +71,12 @@ func (s *ShortenerServer) ExpandURL(
 		}
 		return nil, status.Error(codes.Internal, "internal error")
 	}
-	return &pb.URLExpandResponse{Result: original}, nil
+	return pb.URLExpandResponse_builder{Result: proto.String(original)}.Build(), nil
 }
 
-// ListUserURLs — gRPC-аналог GET /api/user/urls.
 func (s *ShortenerServer) ListUserURLs(
 	ctx context.Context,
-	_ *emptypb.Empty,
+	_ *pb.ListURLsRequest,
 ) (*pb.UserURLsResponse, error) {
 	userID, _ := ctx.Value(user.UserIDContextKey).(string)
 
@@ -95,15 +87,14 @@ func (s *ShortenerServer) ListUserURLs(
 
 	urlData := make([]*pb.URLData, len(pairs))
 	for i, p := range pairs {
-		urlData[i] = &pb.URLData{
-			ShortUrl:    s.cfg.BaseURL + "/" + p.ShortURL,
-			OriginalUrl: p.OriginalURL,
-		}
+		urlData[i] = pb.URLData_builder{
+			ShortUrl:    proto.String(s.cfg.BaseURL + "/" + p.ShortURL),
+			OriginalUrl: proto.String(p.OriginalURL),
+		}.Build()
 	}
-	return &pb.UserURLsResponse{Url: urlData}, nil
+	return pb.UserURLsResponse_builder{Url: urlData}.Build(), nil
 }
 
-// httpStatusToGRPC переводит HTTP-статус из models.AppError в gRPC-код.
 func httpStatusToGRPC(httpStatus int) codes.Code {
 	switch httpStatus {
 	case http.StatusBadRequest:

@@ -1,5 +1,3 @@
-// Package storage определяет интерфейс хранилища и его реализации:
-// in-memory, JSON-файловую и PostgreSQL.
 package storage
 
 import (
@@ -17,6 +15,18 @@ type URLPair struct {
 	OriginalURL string
 }
 
+type BatchItem struct {
+	ID  string
+	URL string
+}
+
+// Stats — согласованный снимок счётчиков сервиса.
+// Оба значения получены на одном снапшоте данных.
+type Stats struct {
+	URLs  int
+	Users int
+}
+
 type Storage interface {
 	Save(ctx context.Context, id string, url string, userID string) error
 	Get(ctx context.Context, id string) (string, error)
@@ -29,9 +39,5 @@ type Storage interface {
 	DeleteURLs(ctx context.Context, ids []string, userID string) error
 	CountURLs(ctx context.Context) (int, error)
 	CountUsers(ctx context.Context) (int, error)
-}
-
-type BatchItem struct {
-	ID  string
-	URL string
+	Stats(ctx context.Context) (Stats, error)
 }

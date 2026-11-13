@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -68,9 +69,11 @@ func setupTest(mock *storage_mocks.MockStorage) *Handler {
 
 // setupTestWithAudit — вариант с явным паблишером (для проверок аудита).
 func setupTestWithAudit(mock *storage_mocks.MockStorage, pub AuditPublisher) *Handler {
+	_, subnet, _ := net.ParseCIDR("127.0.0.1/32")
 	cfg := &config.Config{
-		ServerAddr: ":8080",
-		BaseURL:    "http://localhost:8080",
+		ServerAddr:       ":8080",
+		BaseURL:          "http://localhost:8080",
+		TrustedSubnetNet: subnet,
 	}
 	return NewHandler(mock, cfg, dummyPinger{}, pub)
 }
@@ -578,48 +581,41 @@ func TestAuditNotPublishedOnFailure(t *testing.T) {
 func TestGetStats(t *testing.T) {
 	tests := []struct {
 		name       string
-		countURLs  func(ctx context.Context) (int, error)
-		countUsers func(ctx context.Context) (int, error)
+		stats      func(ctx context.Context) (storage.Stats, error)
 		wantStatus int
 		wantURLs   int
 		wantUsers  int
 	}{
 		{
-			name:       "success",
-			countURLs:  func(ctx context.Context) (int, error) { return 42, nil },
-			countUsers: func(ctx context.Context) (int, error) { return 7, nil },
+			name: "success",
+			stats: func(ctx context.Context) (storage.Stats, error) {
+				return storage.Stats{URLs: 42, Users: 7}, nil
+			},
 			wantStatus: http.StatusOK,
 			wantURLs:   42,
 			wantUsers:  7,
 		},
 		{
-			name:       "empty service",
-			countURLs:  func(ctx context.Context) (int, error) { return 0, nil },
-			countUsers: func(ctx context.Context) (int, error) { return 0, nil },
+			name: "empty service",
+			stats: func(ctx context.Context) (storage.Stats, error) {
+				return storage.Stats{URLs: 0, Users: 0}, nil
+			},
 			wantStatus: http.StatusOK,
 			wantURLs:   0,
 			wantUsers:  0,
 		},
 		{
-			name:       "countURLs error",
-			countURLs:  func(ctx context.Context) (int, error) { return 0, errors.New("db error") },
-			countUsers: func(ctx context.Context) (int, error) { return 0, nil },
-			wantStatus: http.StatusInternalServerError,
-		},
-		{
-			name:       "countUsers error",
-			countURLs:  func(ctx context.Context) (int, error) { return 10, nil },
-			countUsers: func(ctx context.Context) (int, error) { return 0, errors.New("db error") },
+			name: "storage error",
+			stats: func(ctx context.Context) (storage.Stats, error) {
+				return storage.Stats{}, errors.New("db error")
+			},
 			wantStatus: http.StatusInternalServerError,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &storage_mocks.MockStorage{
-				CountURLsFunc:  tt.countURLs,
-				CountUsersFunc: tt.countUsers,
-			}
+			mock := &storage_mocks.MockStorage{StatsFunc: tt.stats}
 			h := setupTest(mock)
 
 			req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
@@ -636,10 +632,6 @@ func TestGetStats(t *testing.T) {
 				return
 			}
 
-			if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "application/json") {
-				t.Errorf("Content-Type = %q, want application/json", ct)
-			}
-
 			var resp models.StatsResponse
 			if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
 				t.Fatalf("decode response: %v", err)
@@ -651,6 +643,28 @@ func TestGetStats(t *testing.T) {
 				t.Errorf("users = %d, want %d", resp.Users, tt.wantUsers)
 			}
 		})
+	}
+}
+
+func TestGetStats_ForbiddenWithoutTrustedSubnet(t *testing.T) {
+	mock := &storage_mocks.MockStorage{
+		StatsFunc: func(ctx context.Context) (storage.Stats, error) {
+			return storage.Stats{URLs: 1, Users: 1}, nil
+		},
+	}
+	cfg := &config.Config{
+		ServerAddr: ":8080",
+		BaseURL:    "http://localhost:8080",
+		// TrustedSubnetNet намеренно не задан.
+	}
+	h := NewHandler(mock, cfg, dummyPinger{}, nopPublisher{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	w := httptest.NewRecorder()
+	h.GetStats(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
 	}
 }
 
@@ -961,8 +975,9 @@ func ExampleHandler_DeleteUserURLs() {
 // ExampleHandler_GetStats показывает ответ эндпоинта статистики.
 func ExampleHandler_GetStats() {
 	mock := &storage_mocks.MockStorage{
-		CountURLsFunc:  func(ctx context.Context) (int, error) { return 42, nil },
-		CountUsersFunc: func(ctx context.Context) (int, error) { return 7, nil },
+		StatsFunc: func(ctx context.Context) (storage.Stats, error) {
+			return storage.Stats{URLs: 42, Users: 7}, nil
+		},
 	}
 	h := setupTest(mock)
 

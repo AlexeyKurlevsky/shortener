@@ -291,3 +291,28 @@ func (p *PostgresStorage) CountUsers(ctx context.Context) (int, error) {
 	}
 	return n, nil
 }
+
+// Stats возвращает согласованный снимок счётчиков сервиса.
+func (p *PostgresStorage) Stats(ctx context.Context) (Stats, error) {
+	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return Stats{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var s Stats
+	if err := tx.QueryRow(ctx,
+		`SELECT
+			(SELECT COUNT(*) FROM urls  WHERE is_deleted = false),
+			(SELECT COUNT(*) FROM users)`).
+		Scan(&s.URLs, &s.Users); err != nil {
+		return Stats{}, fmt.Errorf("stats: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Stats{}, fmt.Errorf("commit: %w", err)
+	}
+	return s, nil
+}

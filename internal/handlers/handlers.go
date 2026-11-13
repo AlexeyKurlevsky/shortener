@@ -379,19 +379,19 @@ func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
-	urls, err := h.storage.CountURLs(r.Context())
+	if h.cfg.TrustedSubnetNet == nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	st, err := h.storage.Stats(r.Context())
 	if err != nil {
-		logger.Log.Error("failed to count URLs", zap.Error(err))
+		logger.Log.Error("failed to get stats", zap.Error(err))
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	users, err := h.storage.CountUsers(r.Context())
-	if err != nil {
-		logger.Log.Error("failed to count users", zap.Error(err))
-		http.Error(w, "Internal error", http.StatusInternalServerError)
-		return
-	}
-	resp := models.StatsResponse{URLs: urls, Users: users}
+
+	resp := models.StatsResponse{URLs: st.URLs, Users: st.Users}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if err := json.NewEncoder(w).Encode(resp); err != nil {

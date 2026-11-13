@@ -2,6 +2,7 @@ package grpcserver
 
 import (
 	"crypto/tls"
+	"fmt"
 
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -11,40 +12,44 @@ import (
 	pb "github.com/AlexeyKurlevsky/shortener/api"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
+	"github.com/AlexeyKurlevsky/shortener/internal/tlsconfig"
 )
 
-// NewGRPCServer собирает gRPC-сервер с интерсепторами и TLS (если tlsCfg != nil).
+// NewGRPCServer собирает gRPC-сервер с интерсепторами.
 //
-// tlsCfg передаётся тот же, что и для HTTP-сервера (ACME-менеджер),
-// чтобы «параметры конфигурации gRPC-сервера совпадали с HTTP»:
-//   - при EnableHTTPS = true  → TLS с SNI-сертификатами из ACME;
-//   - при EnableHTTPS = false → обычный plaintext-порт.
+// Транспорт всегда TLS:
+//   - при EnableHTTPS = true  — используется tlsCfg (ACME-менеджер);
+//   - при EnableHTTPS = false — генерируется эфемерный самоподписанный
+//     сертификат для localhost. Параметры конфигурации сервера
+//     (интерсепторы, порт, reflection) при этом не меняются.
 func NewGRPCServer(
 	cfg *config.Config,
 	stor storage.Storage,
 	auth TokenAuthenticator,
 	log *zap.Logger,
 	tlsCfg *tls.Config,
-) *grpc.Server {
-	var opts []grpc.ServerOption
-
-	if tlsCfg != nil {
-		opts = append(opts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+) (*grpc.Server, error) {
+	if tlsCfg == nil {
+		var err error
+		tlsCfg, err = tlsconfig.NewSelfSignedTLSConfig()
+		if err != nil {
+			return nil, fmt.Errorf("self-signed TLS config: %w", err)
+		}
+		log.Info("gRPC: using self-signed TLS (EnableHTTPS=false)")
 	}
 
-	opts = append(opts,
+	opts := []grpc.ServerOption{
+		grpc.Creds(credentials.NewTLS(tlsCfg)),
 		grpc.ChainUnaryInterceptor(
 			RecoveryInterceptor(),
 			LoggingInterceptor(log),
 			AuthInterceptor(auth),
 		),
-	)
+	}
 
 	srv := grpc.NewServer(opts...)
 	pb.RegisterShortenerServiceServer(srv, NewShortenerServer(cfg, stor))
-
-	// reflection полезен для grpcurl/отладки. В проде при желании уберите.
 	reflection.Register(srv)
 
-	return srv
+	return srv, nil
 }

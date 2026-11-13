@@ -153,3 +153,24 @@ func (m *MemoryStorage) CountUsers(ctx context.Context) (int, error) {
 	}
 	return len(users), nil
 }
+
+// Stats возвращает согласованный снимок счётчиков сервиса.
+// Оба значения читаются в одном проходе под одним RLock — писатель
+// не может изменить данные между подсчётами.
+func (m *MemoryStorage) Stats(ctx context.Context) (Stats, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var s Stats
+	users := make(map[string]struct{})
+	for _, link := range m.data {
+		if !link.IsDeleted {
+			s.URLs++
+		}
+		if link.UserID != "" {
+			users[link.UserID] = struct{}{}
+		}
+	}
+	s.Users = len(users)
+	return s, nil
+}
