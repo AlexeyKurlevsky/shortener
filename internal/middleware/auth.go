@@ -10,7 +10,7 @@ func AuthMiddleware(us user.UserService) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ctx := us.EnsureUser(w, r)
-			userID := ctx.Value(user.UserIDContextKey)
+			userID, _ := ctx.Value(user.UserIDContextKey).(string)
 			if userID == "" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return

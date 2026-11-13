@@ -18,6 +18,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
+	"github.com/AlexeyKurlevsky/shortener/internal/core"
 	"github.com/AlexeyKurlevsky/shortener/internal/logger"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
@@ -54,9 +55,9 @@ func (h *Handler) CreateShortURL(w http.ResponseWriter, r *http.Request) {
 	}
 	link := string(body)
 
-	shortLink, err := handleShorten(r.Context(), link, h.storage, userID)
+	shortLink, err := core.ShortenURL(r.Context(), link, userID, h.storage)
 	if err != nil {
-		var dupErr *DuplicateURLError
+		var dupErr *models.DuplicateURLError
 		if errors.As(err, &dupErr) {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusConflict)
@@ -154,9 +155,9 @@ func (h *Handler) CreateShortURLJson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortLink, err := handleShorten(r.Context(), req.URL, h.storage, userID)
+	shortLink, err := core.ShortenURL(r.Context(), req.URL, userID, h.storage)
 	if err != nil {
-		var dupErr *DuplicateURLError
+		var dupErr *models.DuplicateURLError
 		if errors.As(err, &dupErr) {
 			resp := models.ShortURLResponse{
 				Result: h.cfg.BaseURL + "/" + dupErr.ExistingID,
@@ -225,7 +226,7 @@ func (h *Handler) PingHandler(w http.ResponseWriter, r *http.Request) {
 // Новые элементы сохраняются через h.storage.BatchSave.
 // При ошибке сохранения — 500 Internal Server Error.
 // При успехе возвращает 201 Created и JSON-массив, построенный
-// buildBatchResponse.
+// core.BuildBatchResponse.
 //
 // Для каждого элемента публикует событие аудита audit.ActionShorten.
 func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
@@ -248,7 +249,7 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	urlMap, newItems, err := prepareBatchItems(r.Context(), reqItems, h.storage, userID)
+	urlMap, newItems, err := core.PrepareBatchItems(r.Context(), reqItems, h.storage, userID)
 	if err != nil {
 		var appErr models.AppError
 		if errors.As(err, &appErr) {
@@ -277,7 +278,7 @@ func (h *Handler) BatchCreateShortURL(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	respItems := buildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
+	respItems := core.BuildBatchResponse(reqItems, urlMap, h.cfg.BaseURL)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	respErr := json.NewEncoder(w).Encode(respItems)
@@ -375,4 +376,25 @@ func (h *Handler) DeleteUserURLs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+func (h *Handler) GetStats(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.TrustedSubnetNet == nil {
+		http.Error(w, "Forbidden", http.StatusForbidden)
+		return
+	}
+
+	st, err := h.storage.Stats(r.Context())
+	if err != nil {
+		logger.Log.Error("failed to get stats", zap.Error(err))
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	resp := models.StatsResponse{URLs: st.URLs, Users: st.Users}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		logger.Log.Error("failed to encode response", zap.Error(err))
+	}
 }

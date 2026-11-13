@@ -5,10 +5,13 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // test decode "hello world"
@@ -334,4 +337,97 @@ func equalMapString(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestTrustedSubnetMiddleware(t *testing.T) {
+	mustCIDR := func(s string) *net.IPNet {
+		_, n, err := net.ParseCIDR(s)
+		require.NoError(t, err)
+		return n
+	}
+
+	okHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("OK"))
+	})
+
+	tests := []struct {
+		name       string
+		subnet     *net.IPNet
+		realIP     string // "" => заголовок не выставляем
+		wantStatus int
+	}{
+		{
+			name:       "nil subnet denies all",
+			subnet:     nil,
+			realIP:     "10.0.0.1",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "nil subnet denies even empty header",
+			subnet:     nil,
+			realIP:     "",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "ip inside subnet v4",
+			subnet:     mustCIDR("10.0.0.0/8"),
+			realIP:     "10.5.6.7",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "ip outside subnet v4",
+			subnet:     mustCIDR("10.0.0.0/8"),
+			realIP:     "192.168.1.1",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "missing X-Real-IP",
+			subnet:     mustCIDR("10.0.0.0/8"),
+			realIP:     "",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "garbage X-Real-IP",
+			subnet:     mustCIDR("10.0.0.0/8"),
+			realIP:     "not-an-ip",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "ip inside subnet v6",
+			subnet:     mustCIDR("::1/128"),
+			realIP:     "::1",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "ip outside subnet v6",
+			subnet:     mustCIDR("::1/128"),
+			realIP:     "::2",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "X-Real-IP with spaces is trimmed",
+			subnet:     mustCIDR("10.0.0.0/8"),
+			realIP:     "  10.1.2.3  ",
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mw := TrustedSubnetMiddleware(tt.subnet)
+			h := mw(okHandler)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			if tt.realIP != "" {
+				req.Header.Set("X-Real-IP", tt.realIP)
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
 }

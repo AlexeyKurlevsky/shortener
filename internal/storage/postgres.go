@@ -267,3 +267,52 @@ func (p *PostgresStorage) DeleteURLs(ctx context.Context, ids []string, userID s
 	}
 	return nil
 }
+
+// CountURLs возвращает количество сокращённых URL в сервисе.
+// Учитываются только «живые» записи (is_deleted = false).
+func (p *PostgresStorage) CountURLs(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM urls WHERE is_deleted = false`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count urls: %w", err)
+	}
+	return n, nil
+}
+
+// CountUsers возвращает количество пользователей в сервисе.
+// Так как ensureUser создаёт запись в users только при сохранении ссылки,
+// это фактически число пользователей, когда-либо сокращавших URL.
+func (p *PostgresStorage) CountUsers(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count users: %w", err)
+	}
+	return n, nil
+}
+
+// Stats возвращает согласованный снимок счётчиков сервиса.
+func (p *PostgresStorage) Stats(ctx context.Context) (Stats, error) {
+	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	})
+	if err != nil {
+		return Stats{}, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var s Stats
+	if err := tx.QueryRow(ctx,
+		`SELECT
+			(SELECT COUNT(*) FROM urls  WHERE is_deleted = false),
+			(SELECT COUNT(*) FROM users)`).
+		Scan(&s.URLs, &s.Users); err != nil {
+		return Stats{}, fmt.Errorf("stats: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return Stats{}, fmt.Errorf("commit: %w", err)
+	}
+	return s, nil
+}

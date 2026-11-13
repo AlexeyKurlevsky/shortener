@@ -61,6 +61,11 @@ type URLPair struct {
 	OriginalURL string `json:"original_url"`
 }
 
+type StatsResponse struct {
+	URLs  int `json:"urls"`
+	Users int `json:"users"`
+}
+
 type DuplicateURLError struct {
 	ExistingID  string
 	OriginalURL string

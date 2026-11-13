@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,9 +18,12 @@ import (
 
 	"github.com/AlexeyKurlevsky/shortener/internal/audit"
 	"github.com/AlexeyKurlevsky/shortener/internal/config"
+	"github.com/AlexeyKurlevsky/shortener/internal/core"
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
 	"github.com/AlexeyKurlevsky/shortener/internal/storage"
 	"github.com/AlexeyKurlevsky/shortener/internal/user"
+
+	storage_mocks "github.com/AlexeyKurlevsky/shortener/internal/storage/mocks"
 )
 
 // ------------------------------------------------------------
@@ -58,92 +62,18 @@ type dummyPinger struct{}
 
 func (d dummyPinger) Ping(ctx context.Context) error { return nil }
 
-// mockStorage реализует storage.Storage.
-type mockStorage struct {
-	findIDByURLFunc  func(ctx context.Context, url string) (string, bool)
-	existsFunc       func(ctx context.Context, id string) bool
-	saveFunc         func(ctx context.Context, id, url, userID string) error
-	getFunc          func(ctx context.Context, id string) (string, error)
-	loadFunc         func(ctx context.Context) error
-	saveToFileFunc   func(ctx context.Context) error
-	batchSaveFunc    func(ctx context.Context, items []storage.BatchItem, userID string) error
-	getAllByUserFunc func(ctx context.Context, userID string) ([]storage.URLPair, error)
-	deleteURLsFunc   func(ctx context.Context, ids []string, userID string) error
-}
-
-func (m *mockStorage) FindIDByURL(ctx context.Context, url string) (string, bool) {
-	if m.findIDByURLFunc != nil {
-		return m.findIDByURLFunc(ctx, url)
-	}
-	return "", false
-}
-
-func (m *mockStorage) Exists(ctx context.Context, id string) bool {
-	if m.existsFunc != nil {
-		return m.existsFunc(ctx, id)
-	}
-	return false
-}
-
-func (m *mockStorage) Save(ctx context.Context, id, url, userID string) error {
-	if m.saveFunc != nil {
-		return m.saveFunc(ctx, id, url, userID)
-	}
-	return nil
-}
-
-func (m *mockStorage) Get(ctx context.Context, id string) (string, error) {
-	if m.getFunc != nil {
-		return m.getFunc(ctx, id)
-	}
-	return "", storage.ErrNotFound
-}
-
-func (m *mockStorage) Load(ctx context.Context) error {
-	if m.loadFunc != nil {
-		return m.loadFunc(ctx)
-	}
-	return nil
-}
-
-func (m *mockStorage) SaveToFile(ctx context.Context) error {
-	if m.saveToFileFunc != nil {
-		return m.saveToFileFunc(ctx)
-	}
-	return nil
-}
-
-func (m *mockStorage) BatchSave(ctx context.Context, items []storage.BatchItem, userID string) error {
-	if m.batchSaveFunc != nil {
-		return m.batchSaveFunc(ctx, items, userID)
-	}
-	return nil
-}
-
-func (m *mockStorage) GetAllByUser(ctx context.Context, userID string) ([]storage.URLPair, error) {
-	if m.getAllByUserFunc != nil {
-		return m.getAllByUserFunc(ctx, userID)
-	}
-	return nil, nil
-}
-
-func (m *mockStorage) DeleteURLs(ctx context.Context, ids []string, userID string) error {
-	if m.deleteURLsFunc != nil {
-		return m.deleteURLsFunc(ctx, ids, userID)
-	}
-	return nil
-}
-
 // setupTest создаёт Handler с mock-хранилищем и заглушкой аудита.
-func setupTest(mock *mockStorage) *Handler {
+func setupTest(mock *storage_mocks.MockStorage) *Handler {
 	return setupTestWithAudit(mock, nopPublisher{})
 }
 
 // setupTestWithAudit — вариант с явным паблишером (для проверок аудита).
-func setupTestWithAudit(mock *mockStorage, pub AuditPublisher) *Handler {
+func setupTestWithAudit(mock *storage_mocks.MockStorage, pub AuditPublisher) *Handler {
+	_, subnet, _ := net.ParseCIDR("127.0.0.1/32")
 	cfg := &config.Config{
-		ServerAddr: ":8080",
-		BaseURL:    "http://localhost:8080",
+		ServerAddr:       ":8080",
+		BaseURL:          "http://localhost:8080",
+		TrustedSubnetNet: subnet,
 	}
 	return NewHandler(mock, cfg, dummyPinger{}, pub)
 }
@@ -187,7 +117,7 @@ func TestIsValidURL(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsValidURL(tt.url); got != tt.want {
+			if got := core.IsValidURL(tt.url); got != tt.want {
 				t.Errorf("IsValidURL(%q) = %v, want %v", tt.url, got, tt.want)
 			}
 		})
@@ -224,10 +154,10 @@ func TestCreateShortURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{
-				findIDByURLFunc: tt.mockFind,
-				existsFunc:      tt.mockExists,
-				saveFunc:        tt.mockSave,
+			mock := &storage_mocks.MockStorage{
+				FindIDByURLFunc: tt.mockFind,
+				ExistsFunc:      tt.mockExists,
+				SaveFunc:        tt.mockSave,
 			}
 			h := setupTest(mock)
 
@@ -306,10 +236,10 @@ func TestCreateShortURLJson(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{
-				findIDByURLFunc: tt.mockFind,
-				existsFunc:      tt.mockExists,
-				saveFunc:        tt.mockSave,
+			mock := &storage_mocks.MockStorage{
+				FindIDByURLFunc: tt.mockFind,
+				ExistsFunc:      tt.mockExists,
+				SaveFunc:        tt.mockSave,
 			}
 			h := setupTest(mock)
 
@@ -440,7 +370,7 @@ func TestGetLink(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{getFunc: tt.mockGet}
+			mock := &storage_mocks.MockStorage{GetFunc: tt.mockGet}
 			h := setupTest(mock)
 
 			req := httptest.NewRequest(http.MethodGet, "/{id}", nil)
@@ -502,7 +432,7 @@ func TestDeleteUserURLs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockStorage{deleteURLsFunc: tt.mockDelete}
+			mock := &storage_mocks.MockStorage{DeleteURLsFunc: tt.mockDelete}
 			h := setupTest(mock)
 
 			var bodyBytes []byte
@@ -541,10 +471,10 @@ func TestDeleteUserURLs(t *testing.T) {
 // ------------------------------------------------------------
 
 func TestAuditOnShorten(t *testing.T) {
-	mock := &mockStorage{
-		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
-		existsFunc:      func(ctx context.Context, id string) bool { return false },
-		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	mock := &storage_mocks.MockStorage{
+		FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		ExistsFunc:      func(ctx context.Context, id string) bool { return false },
+		SaveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
 	}
 	spy := &spyPublisher{}
 	h := setupTestWithAudit(mock, spy)
@@ -574,8 +504,8 @@ func TestAuditOnShorten(t *testing.T) {
 }
 
 func TestAuditOnFollow(t *testing.T) {
-	mock := &mockStorage{
-		getFunc: func(ctx context.Context, id string) (string, error) {
+	mock := &storage_mocks.MockStorage{
+		GetFunc: func(ctx context.Context, id string) (string, error) {
 			return "https://example.com/target", nil
 		},
 	}
@@ -607,8 +537,8 @@ func TestAuditOnFollow(t *testing.T) {
 // Проверяем, что при ошибке (409 Conflict / 404) событие НЕ публикуется.
 func TestAuditNotPublishedOnFailure(t *testing.T) {
 	t.Run("shorten conflict", func(t *testing.T) {
-		mock := &mockStorage{
-			findIDByURLFunc: func(ctx context.Context, url string) (string, bool) {
+		mock := &storage_mocks.MockStorage{
+			FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) {
 				return "abc123", true
 			},
 		}
@@ -626,8 +556,8 @@ func TestAuditNotPublishedOnFailure(t *testing.T) {
 	})
 
 	t.Run("follow not found", func(t *testing.T) {
-		mock := &mockStorage{
-			getFunc: func(ctx context.Context, id string) (string, error) {
+		mock := &storage_mocks.MockStorage{
+			GetFunc: func(ctx context.Context, id string) (string, error) {
 				return "", storage.ErrNotFound
 			},
 		}
@@ -648,6 +578,96 @@ func TestAuditNotPublishedOnFailure(t *testing.T) {
 	})
 }
 
+func TestGetStats(t *testing.T) {
+	tests := []struct {
+		name       string
+		stats      func(ctx context.Context) (storage.Stats, error)
+		wantStatus int
+		wantURLs   int
+		wantUsers  int
+	}{
+		{
+			name: "success",
+			stats: func(ctx context.Context) (storage.Stats, error) {
+				return storage.Stats{URLs: 42, Users: 7}, nil
+			},
+			wantStatus: http.StatusOK,
+			wantURLs:   42,
+			wantUsers:  7,
+		},
+		{
+			name: "empty service",
+			stats: func(ctx context.Context) (storage.Stats, error) {
+				return storage.Stats{URLs: 0, Users: 0}, nil
+			},
+			wantStatus: http.StatusOK,
+			wantURLs:   0,
+			wantUsers:  0,
+		},
+		{
+			name: "storage error",
+			stats: func(ctx context.Context) (storage.Stats, error) {
+				return storage.Stats{}, errors.New("db error")
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &storage_mocks.MockStorage{StatsFunc: tt.stats}
+			h := setupTest(mock)
+
+			req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+			w := httptest.NewRecorder()
+			h.GetStats(w, req)
+
+			res := w.Result()
+			defer res.Body.Close()
+
+			if res.StatusCode != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", res.StatusCode, tt.wantStatus)
+			}
+			if tt.wantStatus != http.StatusOK {
+				return
+			}
+
+			var resp models.StatsResponse
+			if err := json.NewDecoder(res.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			if resp.URLs != tt.wantURLs {
+				t.Errorf("urls = %d, want %d", resp.URLs, tt.wantURLs)
+			}
+			if resp.Users != tt.wantUsers {
+				t.Errorf("users = %d, want %d", resp.Users, tt.wantUsers)
+			}
+		})
+	}
+}
+
+func TestGetStats_ForbiddenWithoutTrustedSubnet(t *testing.T) {
+	mock := &storage_mocks.MockStorage{
+		StatsFunc: func(ctx context.Context) (storage.Stats, error) {
+			return storage.Stats{URLs: 1, Users: 1}, nil
+		},
+	}
+	cfg := &config.Config{
+		ServerAddr: ":8080",
+		BaseURL:    "http://localhost:8080",
+		// TrustedSubnetNet намеренно не задан.
+	}
+	h := NewHandler(mock, cfg, dummyPinger{}, nopPublisher{})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	w := httptest.NewRecorder()
+	h.GetStats(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
 // ------------------------------------------------------------
 // Примеры (Examples)
 // ------------------------------------------------------------
@@ -655,10 +675,10 @@ func TestAuditNotPublishedOnFailure(t *testing.T) {
 // Example демонстрирует базовый сценарий работы пакета:
 // сокращение URL и последующий редирект по короткому идентификатору.
 func Example() {
-	mock := &mockStorage{
-		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
-		existsFunc:      func(ctx context.Context, id string) bool { return false },
-		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	mock := &storage_mocks.MockStorage{
+		FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		ExistsFunc:      func(ctx context.Context, id string) bool { return false },
+		SaveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
 	}
 	h := setupTest(mock)
 
@@ -677,10 +697,10 @@ func Example() {
 
 // ExampleIsValidURL показывает, какие строки считаются корректными URL.
 func ExampleIsValidURL() {
-	fmt.Println(IsValidURL("https://example.com"))
-	fmt.Println(IsValidURL("http://localhost:8080/path?q=1"))
-	fmt.Println(IsValidURL("ftp://example.com"))
-	fmt.Println(IsValidURL("not-a-url"))
+	fmt.Println(core.IsValidURL("https://example.com"))
+	fmt.Println(core.IsValidURL("http://localhost:8080/path?q=1"))
+	fmt.Println(core.IsValidURL("ftp://example.com"))
+	fmt.Println(core.IsValidURL("not-a-url"))
 	// Output:
 	// true
 	// true
@@ -691,10 +711,10 @@ func ExampleIsValidURL() {
 // ExampleHandler_CreateShortURL показывает сокращение URL, пришедшего
 // в теле запроса как text/plain.
 func ExampleHandler_CreateShortURL() {
-	mock := &mockStorage{
-		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
-		existsFunc:      func(ctx context.Context, id string) bool { return false },
-		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	mock := &storage_mocks.MockStorage{
+		FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		ExistsFunc:      func(ctx context.Context, id string) bool { return false },
+		SaveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
 	}
 	h := setupTest(mock)
 
@@ -716,8 +736,8 @@ func ExampleHandler_CreateShortURL() {
 // ExampleHandler_CreateShortURL_conflict показывает обработку дубликата:
 // если URL уже сохранён, возвращается 409 Conflict и существующая ссылка.
 func ExampleHandler_CreateShortURL_conflict() {
-	mock := &mockStorage{
-		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) {
+	mock := &storage_mocks.MockStorage{
+		FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) {
 			return "abc123", true
 		},
 	}
@@ -738,10 +758,10 @@ func ExampleHandler_CreateShortURL_conflict() {
 
 // ExampleHandler_CreateShortURLJson показывает сокращение URL из JSON-запроса.
 func ExampleHandler_CreateShortURLJson() {
-	mock := &mockStorage{
-		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
-		existsFunc:      func(ctx context.Context, id string) bool { return false },
-		saveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
+	mock := &storage_mocks.MockStorage{
+		FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		ExistsFunc:      func(ctx context.Context, id string) bool { return false },
+		SaveFunc:        func(ctx context.Context, id, url, userID string) error { return nil },
 	}
 	h := setupTest(mock)
 
@@ -767,8 +787,8 @@ func ExampleHandler_CreateShortURLJson() {
 
 // ExampleHandler_GetLink показывает редирект по короткому идентификатору.
 func ExampleHandler_GetLink() {
-	mock := &mockStorage{
-		getFunc: func(ctx context.Context, id string) (string, error) {
+	mock := &storage_mocks.MockStorage{
+		GetFunc: func(ctx context.Context, id string) (string, error) {
 			return "https://example.com/target", nil
 		},
 	}
@@ -791,8 +811,8 @@ func ExampleHandler_GetLink() {
 
 // ExampleHandler_GetLink_notFound показывает ответ 404 для неизвестного id.
 func ExampleHandler_GetLink_notFound() {
-	mock := &mockStorage{
-		getFunc: func(ctx context.Context, id string) (string, error) {
+	mock := &storage_mocks.MockStorage{
+		GetFunc: func(ctx context.Context, id string) (string, error) {
 			return "", storage.ErrNotFound
 		},
 	}
@@ -813,7 +833,7 @@ func ExampleHandler_GetLink_notFound() {
 
 // ExampleHandler_PingHandler показывает успешную проверку БД.
 func ExampleHandler_PingHandler() {
-	mock := &mockStorage{}
+	mock := &storage_mocks.MockStorage{}
 	h := setupTest(mock)
 
 	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
@@ -830,7 +850,7 @@ func ExampleHandler_PingHandler() {
 
 // ExampleHandler_PingHandler_failure показывает ответ 500 при недоступной БД.
 func ExampleHandler_PingHandler_failure() {
-	mock := &mockStorage{}
+	mock := &storage_mocks.MockStorage{}
 	cfg := &config.Config{ServerAddr: ":8080", BaseURL: "http://localhost:8080"}
 	badPinger := mockPinger{
 		pingFunc: func(ctx context.Context) error { return errors.New("connection refused") },
@@ -849,8 +869,8 @@ func ExampleHandler_PingHandler_failure() {
 
 // ExampleHandler_GetUserURLs показывает список ссылок пользователя.
 func ExampleHandler_GetUserURLs() {
-	mock := &mockStorage{
-		getAllByUserFunc: func(ctx context.Context, userID string) ([]storage.URLPair, error) {
+	mock := &storage_mocks.MockStorage{
+		GetAllByUserFunc: func(ctx context.Context, userID string) ([]storage.URLPair, error) {
 			return []storage.URLPair{
 				{ShortURL: "aaa111", OriginalURL: "https://example.com/a"},
 			}, nil
@@ -881,8 +901,8 @@ func ExampleHandler_GetUserURLs() {
 // ExampleHandler_GetUserURLs_empty показывает 204 No Content,
 // если у пользователя нет ссылок.
 func ExampleHandler_GetUserURLs_empty() {
-	mock := &mockStorage{
-		getAllByUserFunc: func(ctx context.Context, userID string) ([]storage.URLPair, error) {
+	mock := &storage_mocks.MockStorage{
+		GetAllByUserFunc: func(ctx context.Context, userID string) ([]storage.URLPair, error) {
 			return nil, nil
 		},
 	}
@@ -901,10 +921,10 @@ func ExampleHandler_GetUserURLs_empty() {
 
 // ExampleHandler_BatchCreateShortURL показывает пакетное сокращение URL.
 func ExampleHandler_BatchCreateShortURL() {
-	mock := &mockStorage{
-		findIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
-		existsFunc:      func(ctx context.Context, id string) bool { return false },
-		batchSaveFunc:   func(ctx context.Context, items []storage.BatchItem, userID string) error { return nil },
+	mock := &storage_mocks.MockStorage{
+		FindIDByURLFunc: func(ctx context.Context, url string) (string, bool) { return "", false },
+		ExistsFunc:      func(ctx context.Context, id string) bool { return false },
+		BatchSaveFunc:   func(ctx context.Context, items []storage.BatchItem, userID string) error { return nil },
 	}
 	h := setupTest(mock)
 
@@ -936,7 +956,7 @@ func ExampleHandler_BatchCreateShortURL() {
 // ExampleHandler_DeleteUserURLs показывает асинхронную постановку задач
 // на удаление: обработчик возвращает 202 Accepted.
 func ExampleHandler_DeleteUserURLs() {
-	mock := &mockStorage{}
+	mock := &storage_mocks.MockStorage{}
 	h := setupTest(mock)
 
 	body := strings.NewReader(`["aaa111","bbb222"]`)
@@ -950,4 +970,24 @@ func ExampleHandler_DeleteUserURLs() {
 	fmt.Println("status:", rec.Code)
 	// Output:
 	// status: 202
+}
+
+// ExampleHandler_GetStats показывает ответ эндпоинта статистики.
+func ExampleHandler_GetStats() {
+	mock := &storage_mocks.MockStorage{
+		StatsFunc: func(ctx context.Context) (storage.Stats, error) {
+			return storage.Stats{URLs: 42, Users: 7}, nil
+		},
+	}
+	h := setupTest(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/internal/stats", nil)
+	rec := httptest.NewRecorder()
+	h.GetStats(rec, req)
+
+	fmt.Println("status:", rec.Code)
+	fmt.Println("body:", rec.Body.String())
+	// Output:
+	// status: 200
+	// body: {"urls":42,"users":7}
 }

@@ -13,6 +13,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"strings"
 
@@ -31,11 +32,14 @@ type Config struct {
 	SecretKeyByte   []byte `mapstructure:"-"`
 	AuditFile       string `env:"AUDIT_FILE"          mapstructure:"audit-file"`
 	AuditURL        string `env:"AUDIT_URL"           mapstructure:"audit-url"`
+	GRPCAddr        string `env:"GRPC_PORT"           mapstructure:"grpc-port"`
 
-	EnableHTTPS  bool     `env:"ENABLE_HTTPS"   mapstructure:"enable-https"`
-	Domains      []string `env:"DOMAINS" envSeparator:"," mapstructure:"domains"`
-	ACMEEmail    string   `env:"ACME_EMAIL"     mapstructure:"acme-email"`
-	ACMECacheDir string   `env:"ACME_CACHE_DIR" mapstructure:"acme-cache"`
+	EnableHTTPS      bool       `env:"ENABLE_HTTPS"   mapstructure:"enable-https"`
+	Domains          []string   `env:"DOMAINS" envSeparator:"," mapstructure:"domains"`
+	ACMEEmail        string     `env:"ACME_EMAIL"     mapstructure:"acme-email"`
+	ACMECacheDir     string     `env:"ACME_CACHE_DIR" mapstructure:"acme-cache"`
+	TrustedSubnet    string     `env:"TRUSTED_SUBNET" mapstructure:"trusted-subnet"`
+	TrustedSubnetNet *net.IPNet `mapstructure:"-"`
 }
 
 func NewConfig() (*Config, error) {
@@ -49,8 +53,10 @@ func NewConfig() (*Config, error) {
 	v.SetDefault("server-addr", ":8080")
 	v.SetDefault("base-url", "http://localhost:8080")
 	v.SetDefault("log-level", "info")
+	v.SetDefault("grpc-port", ":50051")
 	v.SetDefault("file-storage-path", "storage.json")
 	v.SetDefault("acme-cache", "certs")
+	v.SetDefault("trusted-subnet", "")
 
 	// ---- 2. JSON-файл (наименьший приоритет) ----
 	// Путь: флаг -c/-config > env CONFIG > (нет файла).
@@ -91,6 +97,7 @@ func NewConfig() (*Config, error) {
 	_ = v.BindEnv("domains", "DOMAINS")
 	_ = v.BindEnv("acme-email", "ACME_EMAIL")
 	_ = v.BindEnv("acme-cache", "ACME_CACHE_DIR")
+	_ = v.BindEnv("trusted-subnet", "trusted-subnet")
 
 	// ---- 4. Флаги (наивысший приоритет) ----
 	// BindPFlags связывает ВСЕ зарегистрированные флаги автоматически:
@@ -128,6 +135,17 @@ func NewConfig() (*Config, error) {
 		return nil, fmt.Errorf("HTTPS enabled but no domains provided (use --domains, DOMAINS or \"domains\" in JSON)")
 	}
 
+	// ---- Валидация trusted-subnet ----
+	if cfg.TrustedSubnet != "" {
+		_, subnet, err := net.ParseCIDR(cfg.TrustedSubnet)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted-subnet %q: %w", cfg.TrustedSubnet, err)
+		}
+		cfg.TrustedSubnetNet = subnet
+	} else {
+		log.Println("WARN: trusted-subnet is empty, /api/internal/* will reject all requests")
+	}
+
 	return &cfg, nil
 }
 
@@ -150,6 +168,7 @@ func newFlagSet() *pflag.FlagSet {
 	pf.String("domains", "", "comma-separated domains for ACME")
 	pf.String("acme-email", "", "email for ACME registration")
 	pf.String("acme-cache", "certs", "directory for ACME certificate cache")
+	pf.StringP("trusted-subnet", "t", "", "trusted subnet (CIDR) for /api/internal/*; empty => deny all")
 
 	return pf
 }
