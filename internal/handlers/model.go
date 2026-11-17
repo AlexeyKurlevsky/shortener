@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"net"
 	"sync"
 	"time"
 
@@ -118,4 +119,8 @@ func (h *Handler) flushBatch(tasks []deleteTask) {
 		}
 		cancel()
 	}
+}
+
+func (h *Handler) GetTrustedSubnet() *net.IPNet {
+	return h.cfg.TrustedSubnetNet
 }

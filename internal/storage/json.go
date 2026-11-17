@@ -185,3 +185,29 @@ func (j *JSONStorage) DeleteURLs(ctx context.Context, ids []string, userID strin
 	}
 	return j.saveToFile(ctx)
 }
+
+// CountURLs возвращает количество «живых» сокращённых URL.
+func (j *JSONStorage) CountURLs(ctx context.Context) (int, error) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	n := 0
+	for _, link := range j.data {
+		if !link.IsDeleted {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// CountUsers возвращает количество уникальных пользователей.
+func (j *JSONStorage) CountUsers(ctx context.Context) (int, error) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	users := make(map[string]struct{})
+	for _, link := range j.data {
+		if link.UserID != "" {
+			users[link.UserID] = struct{}{}
+		}
+	}
+	return len(users), nil
+}
