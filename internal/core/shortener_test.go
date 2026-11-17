@@ -1,16 +1,17 @@
-package handlers
+package core
 
 import (
 	"context"
 	"testing"
 
 	"github.com/AlexeyKurlevsky/shortener/internal/models"
+	storage_mocks "github.com/AlexeyKurlevsky/shortener/internal/storage/mocks"
 )
 
 // BenchmarkGenerateID замеряет скорость генерации короткого идентификатора.
 func BenchmarkGenerateID(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_ = generateID()
+		_ = GenerateID()
 	}
 }
 
@@ -46,26 +47,26 @@ func BenchmarkNormalizeURL(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = normalizeURL(urls[i%len(urls)])
+		_ = NormalizeURL(urls[i%len(urls)])
 	}
 }
 
 // BenchmarkHandleShorten замеряет полный цикл сокращения одного URL (без дубликатов).
 func BenchmarkHandleShorten(b *testing.B) {
 	ctx := context.Background()
-	store := &mockStorage{}
+	store := &storage_mocks.MockStorage{}
 	userID := "user123"
 	url := "https://example.com/very/long/path"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = handleShorten(ctx, url, store, userID)
+		_, _ = ShortenURL(ctx, url, userID, store)
 	}
 }
 
 // BenchmarkPrepareBatchItems замеряет подготовку элементов для батчевого сокращения.
 func BenchmarkPrepareBatchItems(b *testing.B) {
 	ctx := context.Background()
-	store := &mockStorage{}
+	store := &storage_mocks.MockStorage{}
 	userID := "user123"
 	items := []models.BatchRequestItem{
 		{CorrelationID: "1", OriginalURL: "https://example.com/1"},
@@ -74,7 +75,7 @@ func BenchmarkPrepareBatchItems(b *testing.B) {
 	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _, _ = prepareBatchItems(ctx, items, store, userID)
+		_, _, _ = PrepareBatchItems(ctx, items, store, userID)
 	}
 }
 
@@ -91,6 +92,6 @@ func BenchmarkBuildBatchResponse(b *testing.B) {
 	baseURL := "http://short.url"
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = buildBatchResponse(items, urlMap, baseURL)
+		_ = BuildBatchResponse(items, urlMap, baseURL)
 	}
 }

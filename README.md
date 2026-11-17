@@ -93,7 +93,7 @@ Showing nodes accounting for -1178.75kB, 23.93% of 4925.47kB total
          0     0% 23.93%   655.29kB 13.30%  compress/gzip.(*Writer).Close
          0     0% 23.93%   655.29kB 13.30%  compress/gzip.(*Writer).Write
          0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/handlers.(*Handler).CreateShortURL
-         0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/handlers.handleShorten
+         0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/handlers.core.ShortenURL(r.Context(), link, userID, h.storage)
          0     0% 23.93%  -768.26kB 15.60%  github.com/AlexeyKurlevsky/shortener/internal/logger.Initialize
          0     0% 23.93%   655.29kB 13.30%  github.com/AlexeyKurlevsky/shortener/internal/middleware.(*compressWriter).Close
          0     0% 23.93%   512.20kB 10.40%  github.com/AlexeyKurlevsky/shortener/internal/middleware.AuthMiddleware.func1.1

@@ -1,4 +1,3 @@
-// Package user предоставляет сервис управления пользователями.
 package user
 
 import (
@@ -17,6 +16,7 @@ type UserService interface {
 	GetUserIDFromRequest(r *http.Request) (string, error)
 	SetUserCookie(w http.ResponseWriter, userID string)
 	EnsureUser(w http.ResponseWriter, r *http.Request) context.Context
+	ValidateAuthorization(ctx context.Context, value string) (string, error)
 }
 
 type userService struct {
@@ -43,6 +43,10 @@ func (s *userService) EnsureUser(w http.ResponseWriter, r *http.Request) context
 		s.SetUserCookie(w, userID)
 	}
 	return context.WithValue(r.Context(), UserIDContextKey, userID)
+}
+
+func (s *userService) ValidateAuthorization(ctx context.Context, value string) (string, error) {
+	return auth.ValidateSignedValue(value, s.secret)
 }
 
 func GetUserIDFromContext(ctx context.Context) string {

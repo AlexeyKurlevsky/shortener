@@ -42,3 +42,8 @@ doc_web:
 
 generate:
 	go run ./cmd/reset .
+
+gen_proto:
+	protoc \
+  --go_out=. --go_opt=paths=source_relative \
+  mypb/demo.proto
